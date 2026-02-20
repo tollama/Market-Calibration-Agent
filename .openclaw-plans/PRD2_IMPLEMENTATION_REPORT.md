@@ -3,10 +3,17 @@
 ## Scope completed
 Implemented PRD2 sequentially (Stage 1..n), then extended with explicit runtime/throughput hardening.
 
-> Note: requested support docs were checked but not present at run time:
+> Support docs were later discovered and integrated:
 > - `.openclaw-plans/PRD2_PERF_BLUEPRINT.md`
 > - `.openclaw-plans/PRD2_LOADTEST_SPEC.md`
 > - `.openclaw-plans/PRD2_TOLLAMA_HARDENING.md`
+> 
+> Integrated updates:
+> - tightened adapter timeout to `1.2s`
+> - connection pool defaults to `200/50`
+> - exponential backoff + jitter retry behavior
+> - circuit breaker profile aligned to `5 failures / 120s cooldown`
+> - runtime config schema expanded for queue/concurrency/deadline budgets
 
 ## Stage-by-stage implementation
 1. **Stage 1: API Contract**
@@ -29,17 +36,25 @@ Implemented PRD2 sequentially (Stage 1..n), then extended with explicit runtime/
    - Added request TTL cache, circuit breaker, pooled HTTP connections.
    - Added reproducible benchmark with built-in SLO budget checks.
 
-## Performance-focused decisions (new)
+## Performance-focused decisions (dedicated hardening pass)
 - **Service cache (TTL 60s)**
   - Decision: request-hash cache in TSFM runner.
   - Why: top-N alert cycles commonly repeat near-identical calls within 1 minute.
   - Effect: cuts repeated tollama calls; lowers p95 and cycle time.
-- **Circuit breaker (3 failures, 30s cooldown)**
-  - Decision: open breaker after 3 consecutive tollama failures; force baseline fallback during cooldown.
-  - Why: avoid timeout storms and protect cycle SLO.
-- **HTTP pooling in adapter (100 max, 20 keepalive)**
-  - Decision: persistent `httpx.Client` with explicit limits.
-  - Why: reduce connection setup overhead and improve throughput under burst loads.
+- **Circuit breaker hardened (5 failures, 120s cooldown)**
+  - Decision: open breaker after 5 consecutive tollama failures; force baseline fallback during cooldown.
+  - Why: deterministic degradation under prolonged runtime faults without hot-loop retries.
+- **HTTP pooling tuned (200 max, 50 keepalive)**
+  - Decision: persistent `httpx.Client` with explicit pool sizing aligned to PRD2 perf blueprint.
+  - Why: better connection reuse with lower socket pressure.
+- **Deterministic fallback protections**
+  - Strict validation of adapter payload shape before acceptance:
+    - quantile set must match expected set,
+    - per-quantile horizon length must match request,
+    - all values must be finite.
+  - On violations, service deterministically falls back to baseline and records explicit reason.
+- **Interval guardrail tightened**
+  - `max_interval_width` reduced from `0.9` to `0.6` to avoid unusably wide degraded intervals.
 - **Runtime perf config file added**
   - `configs/tsfm_runtime.yaml` with SLO/perf knobs for repeatable operations.
 
@@ -62,33 +77,33 @@ Implemented PRD2 sequentially (Stage 1..n), then extended with explicit runtime/
 - `freq=5m`, `horizon_steps=12`, `input_len_steps=288`: aligns with alert cadence + 24h context.
 - `quantiles=[0.1,0.5,0.9]`: standard interval contract for gate/breach flow.
 - `transform=logit`, `eps=1e-6`: stable bounded-probability modeling.
-- `tollama timeout=2.0s`, `retry=1`: resilience without overshooting p95 target.
+- `tollama timeout=1.2s`, `retry=1` (+exp backoff/jitter): better tail-latency control from hardening guide.
 - `min_points_for_tsfm=32`: prevents unstable short-context inference.
 - `baseline_method=EWMA`: low-latency robust fallback.
 - `baseline_only_liquidity=low`: conservative operation for illiquid markets.
-- `min_interval_width=0.02`, `max_interval_width=0.9`: prevents pathological overconfident or unusably wide bands.
+- `min_interval_width=0.02`, `max_interval_width=0.6`: prevents pathological overconfident or unusably wide bands.
 - **Perf defaults**:
   - `cache_ttl_s=60`
-  - `circuit_breaker_failures=3`
-  - `circuit_breaker_cooldown_s=30`
-  - `max_connections=100`
-  - `max_keepalive_connections=20`
+  - `circuit_breaker_failures=5`
+  - `circuit_breaker_cooldown_s=120`
+  - `max_connections=200`
+  - `max_keepalive_connections=50`
 
 ## Verification executed
 ### 1) Unit/API checks
 ```bash
-python3 -m pytest tests/unit/test_tsfm_runner_service.py tests/unit/test_api_tsfm_forecast.py tests/unit/test_tsfm_model_license_guard.py tests/unit/test_baseline_bands.py tests/unit/test_tsfm_base_contract.py
+python3 -m pytest tests/unit/test_tsfm_runner_service.py tests/unit/test_tsfm_perf_smoke.py tests/unit/test_api_tsfm_forecast.py tests/unit/test_tsfm_model_license_guard.py tests/unit/test_baseline_bands.py tests/unit/test_tsfm_base_contract.py
 ```
-Result: **17 passed**.
+Result: **20 passed**.
 
 ### 2) Reproducible perf smoke benchmark + SLO budget checks
 ```bash
 PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 200 --unique 20 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60
 ```
 Observed:
-- `elapsed_s=0.977`
-- `throughput_rps=204.81`
-- `latency_p95_ms=49.94`
+- `elapsed_s=1.060`
+- `throughput_rps=188.75`
+- `latency_p95_ms=53.78`
 - `cache_hit_rate=0.900`
 - `SLO_PASS`
 
@@ -96,9 +111,9 @@ Observed:
 PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 200 --unique 200 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60
 ```
 Observed (cold-ish, no cache reuse):
-- `elapsed_s=10.591`
-- `throughput_rps=18.88`
-- `latency_p95_ms=75.71`
+- `elapsed_s=10.396`
+- `throughput_rps=19.24`
+- `latency_p95_ms=75.85`
 - `cache_hit_rate=0.000`
 - `SLO_PASS`
 

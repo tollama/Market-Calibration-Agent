@@ -52,6 +52,29 @@ def _fix_quantile_crossing(quantiles: dict[float, list[float]]) -> tuple[dict[fl
     return fixed, crossed
 
 
+def _validate_quantile_payload(
+    quantile_paths: Mapping[float, list[float]],
+    *,
+    expected_quantiles: list[float],
+    expected_horizon_steps: int,
+) -> None:
+    expected = set(expected_quantiles)
+    got = set(quantile_paths.keys())
+    if expected != got:
+        raise ValueError(
+            f"quantile_set_mismatch: expected={sorted(expected)} got={sorted(got)}"
+        )
+
+    for q in expected_quantiles:
+        path = quantile_paths[q]
+        if len(path) != expected_horizon_steps:
+            raise ValueError(
+                f"horizon_mismatch:q={q} expected={expected_horizon_steps} got={len(path)}"
+            )
+        if any(not math.isfinite(v) for v in path):
+            raise ValueError(f"non_finite_value:q={q}")
+
+
 @dataclass(frozen=True)
 class TSFMServiceConfig:
     default_freq: str = "5m"
@@ -68,8 +91,8 @@ class TSFMServiceConfig:
     baseline_only_liquidity: str = "low"
     # performance defaults
     cache_ttl_s: int = 60
-    circuit_breaker_failures: int = 3
-    circuit_breaker_cooldown_s: int = 30
+    circuit_breaker_failures: int = 5
+    circuit_breaker_cooldown_s: int = 120
 
 
 class TSFMRunnerService:
@@ -132,6 +155,7 @@ class TSFMRunnerService:
         step_seconds = _parse_freq_to_seconds(freq)
         horizon_steps = int(request.get("horizon_steps") or self.config.default_horizon_steps)
         quantiles = [float(q) for q in (request.get("quantiles") or self.config.default_quantiles)]
+        quantiles = sorted(quantiles)
         y_raw = [float(v) for v in request.get("y", [])]
         transform = request.get("transform") or {}
         space = str(transform.get("space") or self.config.transform_space)
@@ -145,6 +169,10 @@ class TSFMRunnerService:
 
         if request.get("liquidity_bucket", "").lower() == self.config.baseline_only_liquidity:
             fallback_reason = "baseline_only_liquidity_bucket"
+
+        if set(quantiles) != set(self.config.default_quantiles):
+            warnings.append("unsupported_quantiles_requested;using_default")
+            quantiles = sorted(self.config.default_quantiles)
 
         now = time.time()
         if now < self._breaker_open_until:
@@ -179,6 +207,11 @@ class TSFMRunnerService:
                     x_past=request.get("x_past") or {},
                     x_future=request.get("x_future") or {},
                     params=((request.get("model") or {}).get("params") or {}),
+                )
+                _validate_quantile_payload(
+                    quantile_paths,
+                    expected_quantiles=quantiles,
+                    expected_horizon_steps=horizon_steps,
                 )
                 meta.update(adapter_meta)
                 self._consecutive_failures = 0

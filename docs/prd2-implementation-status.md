@@ -60,7 +60,7 @@
   - 요청 해시 기반 TTL cache (`cache_ttl_s=60`)
   - 연속 실패 기반 circuit breaker (`3회 실패`, `30s` cooldown)
 - `TollamaAdapter` 커넥션 풀 기본값 추가:
-  - `max_connections=100`
+  - `max_connections=200`
   - `max_keepalive_connections=20`
 - 성능 스모크 벤치마크 추가:
   - `pipelines/bench_tsfm_runner_perf.py`
@@ -74,14 +74,14 @@
 - `horizon_steps=12`: 1h 예측
 - `quantiles=[0.1,0.5,0.9]`: Gate/coverage 실무 표준
 - `transform=logit, eps=1e-6`: bounded target 안정화
-- `tollama timeout=2s, retry=1`: SLO와 안정성 균형
+- `tollama timeout=1.2s, retry=1(+exp backoff/jitter)`: p95/p99 tail-latency 방어
 - `baseline_method=EWMA`: 계산비용 낮고 fallback latency 유리
 - `min_points_for_tsfm=32`: 극단적 짧은 시계열 보호
 - `min_interval_width=0.02, max_interval_width=0.9`: 과도한 협/광 밴드 방지
 - `baseline_only_liquidity=low`: 극저유동 시장에서는 보수적 운영
 - `cache_ttl_s=60`: 5분 cadence에서 동일 요청 burst 흡수
-- `circuit_breaker_failures=3, cooldown=30s`: 장애시 baseline 전환을 빠르게 고정
-- `http pool: max_connections=100, keepalive=20`: top-N 배치 처리량 안정화
+- `circuit_breaker_failures=5, cooldown=120s`: flapping 줄이고 안정적 복구 유도
+- `http pool: max_connections=200, keepalive=50`: top-N 배치 처리량 headroom 확보
 
 ## 실행 방법
 1. 의존성 설치

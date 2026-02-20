@@ -82,7 +82,29 @@ def test_tsfm_service_circuit_breaker_opens_after_consecutive_failures() -> None
     service.forecast(req)
     service.forecast({**req, "as_of_ts": "2026-02-20T00:05:00Z"})
     service.forecast({**req, "as_of_ts": "2026-02-20T00:10:00Z"})
-    response = service.forecast({**req, "as_of_ts": "2026-02-20T00:15:00Z"})
+    service.forecast({**req, "as_of_ts": "2026-02-20T00:15:00Z"})
+    service.forecast({**req, "as_of_ts": "2026-02-20T00:20:00Z"})
+    response = service.forecast({**req, "as_of_ts": "2026-02-20T00:25:00Z"})
 
     assert response["meta"]["fallback_used"] is True
     assert any("circuit_breaker_open" in w for w in response["meta"]["warnings"])
+
+
+def test_tsfm_service_fallbacks_on_invalid_adapter_shape() -> None:
+    adapter = _FakeAdapter(quantiles={0.1: [0.2], 0.5: [0.3], 0.9: [0.4]})
+    service = TSFMRunnerService(adapter=adapter)
+
+    response = service.forecast(_request())
+
+    assert response["meta"]["fallback_used"] is True
+    assert any("horizon_mismatch" in w for w in response["meta"]["warnings"])
+
+
+def test_tsfm_service_reverts_to_default_quantiles_when_unsupported_requested() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+    req = {**_request(), "quantiles": [0.2, 0.5, 0.8]}
+
+    response = service.forecast(req)
+
+    assert response["quantiles"] == [0.1, 0.5, 0.9]
+    assert "unsupported_quantiles_requested;using_default" in response["meta"]["warnings"]

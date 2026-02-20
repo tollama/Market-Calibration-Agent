@@ -8,21 +8,32 @@ tsfm:
     eps: 1e-6
   missing:
     max_gap_minutes: 60
-  timeouts:
-    tollama_timeout_s: 2.0
+    min_points_for_tsfm: 32
+  adapter:
+    timeout_s: 1.2
     retry_count: 1
+    retry_backoff_ms: 120
+    retry_jitter_ms: 80
+    deadline_budget_ms: 1600
+    max_connections: 200
+    max_keepalive_connections: 50
+  cache:
+    ttl_s: 60
+    max_entries: 50000
+    stale_while_revalidate_s: 20
+  circuit_breaker:
+    failures_to_open: 5
+    cooldown_s: 120
   perf:
-    cache_ttl_s: 60
-    circuit_breaker_failures: 3
-    circuit_breaker_cooldown_s: 30
-    max_connections: 100
-    max_keepalive_connections: 20
+    worker_concurrency: 32
+    per_market_inflight_limit: 1
+    queue_timeout_ms: 100
   fallback:
     baseline_method: EWMA
     baseline_only_liquidity_bucket: low
   interval_sanity:
     min_width: 0.02
-    max_width: 0.9
+    max_width: 0.60
   slo:
     per_request_p95_ms: 300
     cycle_top_n_seconds: 60

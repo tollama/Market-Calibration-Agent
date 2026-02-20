@@ -7,8 +7,8 @@ from typing import Any, Mapping, Sequence
 
 import httpx
 
-DEFAULT_MAX_CONNECTIONS = 64
-DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 32
+DEFAULT_MAX_CONNECTIONS = 200
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 50
 
 
 class TollamaError(RuntimeError):
@@ -19,9 +19,11 @@ class TollamaError(RuntimeError):
 class TollamaConfig:
     base_url: str = "http://localhost:11435"
     endpoint: str = "/v1/timeseries/forecast"
-    timeout_s: float = 2.0
+    timeout_s: float = 1.2
     retry_count: int = 1
-    retry_jitter_s: float = 0.2
+    retry_backoff_base_s: float = 0.12
+    retry_backoff_cap_s: float = 0.8
+    retry_jitter_s: float = 0.08
     token: str | None = None
     max_connections: int = DEFAULT_MAX_CONNECTIONS
     max_keepalive_connections: int = DEFAULT_MAX_KEEPALIVE_CONNECTIONS
@@ -100,12 +102,32 @@ class TollamaAdapter:
                     "raw_response_meta": body.get("meta", {}),
                 }
                 return parsed, meta
-            except Exception as exc:  # noqa: BLE001
+            except httpx.HTTPStatusError as exc:
                 last_error = exc
-                if idx < attempts - 1:
+                code = exc.response.status_code
+                retryable = code in {429, 502, 503, 504}
+                if idx < attempts - 1 and retryable:
+                    backoff = min(
+                        self.config.retry_backoff_base_s * (2**idx),
+                        self.config.retry_backoff_cap_s,
+                    )
                     jitter = random.random() * self.config.retry_jitter_s
-                    time.sleep(jitter)
+                    time.sleep(backoff + jitter)
                     continue
                 break
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                last_error = exc
+                if idx < attempts - 1:
+                    backoff = min(
+                        self.config.retry_backoff_base_s * (2**idx),
+                        self.config.retry_backoff_cap_s,
+                    )
+                    jitter = random.random() * self.config.retry_jitter_s
+                    time.sleep(backoff + jitter)
+                    continue
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                break
 
-        raise TollamaError(f"tollama forecast failed: {last_error}")
+        raise TollamaError(f"tollama forecast failed: {type(last_error).__name__}: {last_error}")

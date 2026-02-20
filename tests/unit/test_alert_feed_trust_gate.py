@@ -12,6 +12,8 @@ def test_build_alert_feed_rows_min_trust_score_suppresses_below_threshold() -> N
             "q10": 0.20,
             "q90": 0.90,
             "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
+            "volume_velocity": 2.10,
             "trust_score": 59.9,
         },
         {
@@ -21,6 +23,8 @@ def test_build_alert_feed_rows_min_trust_score_suppresses_below_threshold() -> N
             "q10": 0.20,
             "q90": 0.90,
             "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
+            "volume_velocity": 2.10,
             "trust_score": 60.0,
         },
         {
@@ -29,6 +33,8 @@ def test_build_alert_feed_rows_min_trust_score_suppresses_below_threshold() -> N
             "p_yes": 0.10,
             "q10": 0.20,
             "q90": 0.80,
+            "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
         },
     ]
 
@@ -50,6 +56,8 @@ def test_build_alert_feed_rows_min_trust_score_preserves_sort_and_alert_id_deter
             "q10": 0.20,
             "q90": 0.90,
             "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
+            "volume_velocity": 2.10,
             "trust_score": 70.0,
         },
         {
@@ -58,6 +66,8 @@ def test_build_alert_feed_rows_min_trust_score_preserves_sort_and_alert_id_deter
             "p_yes": 0.10,
             "q10": 0.20,
             "q90": 0.80,
+            "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
             "trust_score": 90.0,
         },
         {
@@ -67,6 +77,8 @@ def test_build_alert_feed_rows_min_trust_score_preserves_sort_and_alert_id_deter
             "q10": 0.20,
             "q90": 0.90,
             "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
+            "volume_velocity": 2.10,
             "trust_score": 75.0,
         },
         {
@@ -76,6 +88,8 @@ def test_build_alert_feed_rows_min_trust_score_preserves_sort_and_alert_id_deter
             "q10": 0.20,
             "q90": 0.90,
             "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
+            "volume_velocity": 2.10,
             "trust_score": 55.0,
         },
         {
@@ -84,6 +98,8 @@ def test_build_alert_feed_rows_min_trust_score_preserves_sort_and_alert_id_deter
             "p_yes": 0.10,
             "q10": 0.20,
             "q90": 0.80,
+            "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
             "trust_score": None,
         },
     ]

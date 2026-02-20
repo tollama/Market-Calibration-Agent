@@ -45,6 +45,14 @@ def _load_weight_overrides(path: Path) -> Mapping[str, object] | None:
     if not isinstance(payload, Mapping):
         return None
 
+    # Preferred config path: trust_score.weights
+    trust_score = payload.get("trust_score")
+    if isinstance(trust_score, Mapping):
+        weights = trust_score.get("weights")
+        if isinstance(weights, Mapping):
+            return weights
+
+    # Backward-compatible legacy path: calibration.trust_score
     calibration = payload.get("calibration")
     if not isinstance(calibration, Mapping):
         return None
@@ -52,6 +60,10 @@ def _load_weight_overrides(path: Path) -> Mapping[str, object] | None:
     trust_score = calibration.get("trust_score")
     if not isinstance(trust_score, Mapping):
         return None
+
+    legacy_weights = trust_score.get("weights")
+    if isinstance(legacy_weights, Mapping):
+        return legacy_weights
 
     return trust_score
 

@@ -128,14 +128,29 @@ async def ingest_gamma_raw(
         dt=dt,
     )
 
+    normalized_record_count = len(markets) + len(events)
+    original_record_count = len(markets_original) + len(events_original)
+    raw_record_count = normalized_record_count + original_record_count
+
+    dt_partition = markets_path.parent.name
+    prd_raw_partition_path = markets_path.parent.parent.parent / dt_partition
+    prd_raw_partition_relpath = str(Path("raw") / "gamma" / dt_partition)
+
     return {
         "market_count": len(markets),
         "event_count": len(events),
+        "raw_record_count": raw_record_count,
+        "original_record_count": original_record_count,
+        "normalized_record_count": normalized_record_count,
         "dataset_counts": {
             "gamma/markets": len(markets),
             "gamma/events": len(events),
             "gamma/markets_original": len(markets_original),
             "gamma/events_original": len(events_original),
+        },
+        "path_meta": {
+            "raw_gamma_dt_path": str(prd_raw_partition_path),
+            "raw_gamma_dt_relpath": prd_raw_partition_relpath,
         },
         "output_paths": {
             "gamma_markets": str(markets_path),

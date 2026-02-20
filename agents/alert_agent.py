@@ -76,13 +76,16 @@ def evaluate_alert(
         ),
     }
 
-    reason_codes = [code for code in _REASON_CODE_ORDER if gate_hits[code]]
-    confirmation_hit = any(gate_hits[code] for code in _REASON_CODE_ORDER[1:])
+    gate1_band_breach = gate_hits[BAND_BREACH]
+    gate2_structure = gate_hits[LOW_OI_CONFIRMATION] or gate_hits[VOLUME_SPIKE]
+    gate3_low_ambiguity = gate_hits[LOW_AMBIGUITY]
 
-    if gate_hits[BAND_BREACH] and confirmation_hit:
-        severity = "HIGH"
-    elif gate_hits[BAND_BREACH]:
-        severity = "MED"
+    reason_codes = [code for code in _REASON_CODE_ORDER if gate_hits[code]]
+    if gate1_band_breach and gate2_structure and gate3_low_ambiguity:
+        if gate_hits[LOW_OI_CONFIRMATION] and gate_hits[VOLUME_SPIKE]:
+            severity = "HIGH"
+        else:
+            severity = "MED"
     else:
         severity = "FYI"
 

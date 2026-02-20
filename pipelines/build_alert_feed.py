@@ -12,6 +12,18 @@ from agents.alert_agent import AlertThresholdConfig, evaluate_alert
 
 _REQUIRED_ROW_KEYS: tuple[str, ...] = ("market_id", "ts", "p_yes", "q10", "q90")
 _SEVERITY_PRIORITY: dict[str, int] = {"HIGH": 0, "MED": 1, "FYI": 2}
+_STRICT_GATE_KEYS: tuple[str, ...] = (
+    "strict_gate_passed",
+    "strict_gate",
+    "strict_gate_result",
+)
+_STRICT_GATE_NESTED_KEYS: tuple[str, ...] = (
+    "passed",
+    "pass",
+    "allow_high_med",
+    "eligible",
+    "value",
+)
 
 
 def build_alert_feed_rows(
@@ -60,6 +72,9 @@ def build_alert_feed_rows(
         )
 
         severity = str(evaluation["severity"])
+        strict_gate_passed = _resolve_strict_gate_passed(row=row, evaluation=evaluation)
+        if severity in {"HIGH", "MED"} and strict_gate_passed is False:
+            severity = "FYI"
         if severity not in _SEVERITY_PRIORITY:
             continue
         if severity == "FYI" and not include_fyi:
@@ -105,6 +120,45 @@ def _optional_float(value: object) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _resolve_strict_gate_passed(
+    *, row: Mapping[str, object], evaluation: Mapping[str, object]
+) -> bool | None:
+    resolved_from_evaluation = _extract_strict_gate_flag(evaluation)
+    if resolved_from_evaluation is not None:
+        return resolved_from_evaluation
+    return _extract_strict_gate_flag(row)
+
+
+def _extract_strict_gate_flag(source: Mapping[str, object]) -> bool | None:
+    for key in _STRICT_GATE_KEYS:
+        if key not in source:
+            continue
+        parsed = _coerce_optional_bool(source.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _coerce_optional_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Mapping):
+        for key in _STRICT_GATE_NESTED_KEYS:
+            if key not in value:
+                continue
+            parsed = _coerce_optional_bool(value.get(key))
+            if parsed is not None:
+                return parsed
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "pass", "passed"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "fail", "failed"}:
+            return False
+    return None
 
 
 def _alert_sort_key(row: Mapping[str, object]) -> tuple[int, float, str]:

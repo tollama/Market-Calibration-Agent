@@ -42,6 +42,38 @@ def test_load_trust_weights_fallbacks_to_defaults_when_file_or_keys_missing(
     _assert_weights_close(from_missing_keys, _DEFAULT_WEIGHTS)
 
 
+def test_load_trust_weights_reads_top_level_weights_from_default_yaml_path(
+    tmp_path, monkeypatch
+) -> None:
+    configs_dir = tmp_path / "configs"
+    configs_dir.mkdir()
+    default_config = configs_dir / "default.yaml"
+    default_config.write_text(
+        "\n".join(
+            [
+                "trust_score:",
+                "  weights:",
+                "    liquidity_depth: 2",
+                "    stability: 1",
+                "    question_quality: 1",
+                "    manipulation_suspect: 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    weights = load_trust_weights()
+    expected = {
+        "liquidity_depth": 0.5,
+        "stability": 0.25,
+        "question_quality": 0.25,
+        "manipulation_suspect": 0.0,
+    }
+    _assert_weights_close(weights, expected)
+
+
 def test_load_trust_weights_partial_override_applies_defaults_for_missing_keys(
     tmp_path,
 ) -> None:
@@ -49,8 +81,8 @@ def test_load_trust_weights_partial_override_applies_defaults_for_missing_keys(
     config_path.write_text(
         "\n".join(
             [
-                "calibration:",
-                "  trust_score:",
+                "trust_score:",
+                "  weights:",
                 "    stability: 1.0",
                 "    unknown_key: 99.0",
             ]
@@ -76,8 +108,8 @@ def test_load_trust_weights_normalizes_total_to_one(tmp_path) -> None:
     config_path.write_text(
         "\n".join(
             [
-                "calibration:",
-                "  trust_score:",
+                "trust_score:",
+                "  weights:",
                 "    liquidity_depth: 2",
                 "    stability: 2",
                 "    question_quality: 2",
@@ -98,13 +130,134 @@ def test_load_trust_weights_normalizes_total_to_one(tmp_path) -> None:
     _assert_weights_close(weights, expected)
 
 
-def test_load_trust_weights_rejects_negative_weight(tmp_path) -> None:
+def test_load_trust_weights_supports_legacy_calibration_path(tmp_path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         "\n".join(
             [
                 "calibration:",
                 "  trust_score:",
+                "    liquidity_depth: 1",
+                "    stability: 1",
+                "    question_quality: 2",
+                "    manipulation_suspect: 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    weights = load_trust_weights(config_path)
+    expected = {
+        "liquidity_depth": 0.25,
+        "stability": 0.25,
+        "question_quality": 0.5,
+        "manipulation_suspect": 0.0,
+    }
+    _assert_weights_close(weights, expected)
+
+
+def test_load_trust_weights_supports_legacy_calibration_weights_path(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "calibration:",
+                "  trust_score:",
+                "    weights:",
+                "      liquidity_depth: 1",
+                "      stability: 1",
+                "      question_quality: 2",
+                "      manipulation_suspect: 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    weights = load_trust_weights(config_path)
+    expected = {
+        "liquidity_depth": 0.25,
+        "stability": 0.25,
+        "question_quality": 0.5,
+        "manipulation_suspect": 0.0,
+    }
+    _assert_weights_close(weights, expected)
+
+
+def test_load_trust_weights_prefers_top_level_weights_over_legacy_path(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "trust_score:",
+                "  weights:",
+                "    liquidity_depth: 4",
+                "    stability: 0",
+                "    question_quality: 0",
+                "    manipulation_suspect: 0",
+                "calibration:",
+                "  trust_score:",
+                "    liquidity_depth: 0",
+                "    stability: 4",
+                "    question_quality: 0",
+                "    manipulation_suspect: 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    weights = load_trust_weights(config_path)
+    expected = {
+        "liquidity_depth": 1.0,
+        "stability": 0.0,
+        "question_quality": 0.0,
+        "manipulation_suspect": 0.0,
+    }
+    _assert_weights_close(weights, expected)
+
+
+def test_load_trust_weights_partial_top_level_still_takes_precedence_over_legacy(
+    tmp_path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "trust_score:",
+                "  weights:",
+                "    liquidity_depth: 4",
+                "calibration:",
+                "  trust_score:",
+                "    liquidity_depth: 0",
+                "    stability: 4",
+                "    question_quality: 0",
+                "    manipulation_suspect: 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    weights = load_trust_weights(config_path)
+    total = 4 + W_STABILITY + W_QUESTION_QUALITY + W_MANIPULATION
+    expected = {
+        "liquidity_depth": 4 / total,
+        "stability": W_STABILITY / total,
+        "question_quality": W_QUESTION_QUALITY / total,
+        "manipulation_suspect": W_MANIPULATION / total,
+    }
+    _assert_weights_close(weights, expected)
+
+
+def test_load_trust_weights_rejects_negative_weight(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "trust_score:",
+                "  weights:",
                 "    liquidity_depth: -0.1",
                 "    stability: 0.3",
                 "    question_quality: 0.3",

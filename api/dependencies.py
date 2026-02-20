@@ -174,7 +174,20 @@ class LocalDerivedStore:
         return filtered[offset : offset + limit], total
 
     def load_postmortem(self, *, market_id: str) -> Tuple[str, Path]:
-        path = self.postmortem_dir / f"{market_id}.md"
+        dated_candidates: List[Tuple[datetime, Path]] = []
+        for candidate in self.postmortem_dir.glob(f"{market_id}_*.md"):
+            resolved_date = candidate.stem.removeprefix(f"{market_id}_")
+            try:
+                parsed_date = datetime.strptime(resolved_date, "%Y-%m-%d")
+            except ValueError:
+                continue
+            dated_candidates.append((parsed_date, candidate))
+
+        if dated_candidates:
+            _, path = max(dated_candidates, key=lambda item: (item[0], str(item[1])))
+        else:
+            path = self.postmortem_dir / f"{market_id}.md"
+
         if not path.exists():
             raise FileNotFoundError(path)
         return path.read_text(encoding="utf-8"), path

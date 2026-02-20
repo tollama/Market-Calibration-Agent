@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -17,6 +18,35 @@ from .schemas import (
 )
 
 app = FastAPI(title="Market Calibration Read-Only API", version="0.1.0")
+
+
+def _select_latest_postmortem_path(
+    *,
+    store: LocalDerivedStore,
+    market_id: str,
+) -> Optional[Path]:
+    prefix = f"{market_id}_"
+    latest_path: Optional[Path] = None
+    latest_key: Optional[tuple[int, date, str]] = None
+
+    for path in store.postmortem_dir.glob("*.md"):
+        if not path.is_file():
+            continue
+        if not path.name.startswith(prefix):
+            continue
+
+        resolved_date_token = path.stem[len(prefix) :]
+        try:
+            resolved_date = date.fromisoformat(resolved_date_token)
+            candidate_key = (1, resolved_date, resolved_date_token)
+        except ValueError:
+            candidate_key = (0, date.min, resolved_date_token)
+
+        if latest_key is None or candidate_key > latest_key:
+            latest_key = candidate_key
+            latest_path = path
+
+    return latest_path
 
 
 @app.get("/scoreboard", response_model=ScoreboardResponse)
@@ -89,7 +119,14 @@ def get_postmortem(
     try:
         content, source_path = store.load_postmortem(market_id=market_id)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Postmortem not found: {market_id}")
+        latest_path = _select_latest_postmortem_path(store=store, market_id=market_id)
+        if latest_path is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Postmortem not found: {market_id}",
+            )
+        content = latest_path.read_text(encoding="utf-8")
+        source_path = latest_path
 
     return PostmortemResponse(
         market_id=market_id,

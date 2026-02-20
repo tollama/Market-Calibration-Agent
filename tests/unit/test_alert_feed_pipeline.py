@@ -21,6 +21,8 @@ def test_build_alert_feed_rows_includes_high_and_med_excludes_fyi() -> None:
             "p_yes": 0.10,
             "q10": 0.20,
             "q90": 0.80,
+            "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
         },
         {
             "market_id": "mkt-high",
@@ -29,6 +31,8 @@ def test_build_alert_feed_rows_includes_high_and_med_excludes_fyi() -> None:
             "q10": 0.20,
             "q90": 0.90,
             "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
+            "volume_velocity": 2.40,
         },
     ]
 
@@ -39,17 +43,34 @@ def test_build_alert_feed_rows_includes_high_and_med_excludes_fyi() -> None:
     assert all(row["alert_id"] for row in alert_rows)
 
     high_row = alert_rows[0]
-    assert high_row["reason_codes"] == ["BAND_BREACH", "LOW_OI_CONFIRMATION"]
+    assert high_row["reason_codes"] == [
+        "BAND_BREACH",
+        "LOW_OI_CONFIRMATION",
+        "LOW_AMBIGUITY",
+        "VOLUME_SPIKE",
+    ]
     assert high_row["evidence"] == {
         "p_yes": 0.95,
         "q10": 0.20,
         "q90": 0.90,
         "oi_change_1h": -0.20,
+        "ambiguity_score": 0.30,
+        "volume_velocity": 2.40,
     }
 
     med_row = alert_rows[1]
-    assert med_row["reason_codes"] == ["BAND_BREACH"]
-    assert med_row["evidence"] == {"p_yes": 0.10, "q10": 0.20, "q90": 0.80}
+    assert med_row["reason_codes"] == [
+        "BAND_BREACH",
+        "LOW_OI_CONFIRMATION",
+        "LOW_AMBIGUITY",
+    ]
+    assert med_row["evidence"] == {
+        "p_yes": 0.10,
+        "q10": 0.20,
+        "q90": 0.80,
+        "oi_change_1h": -0.20,
+        "ambiguity_score": 0.30,
+    }
 
 
 def test_build_alert_feed_rows_sorting_and_hash_are_deterministic() -> None:
@@ -60,6 +81,8 @@ def test_build_alert_feed_rows_sorting_and_hash_are_deterministic() -> None:
             "p_yes": 0.95,
             "q10": 0.20,
             "q90": 0.90,
+            "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
             "volume_velocity": 2.20,
         },
         {
@@ -68,6 +91,8 @@ def test_build_alert_feed_rows_sorting_and_hash_are_deterministic() -> None:
             "p_yes": 0.10,
             "q10": 0.20,
             "q90": 0.80,
+            "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
         },
         {
             "market_id": "mkt-1",
@@ -76,6 +101,8 @@ def test_build_alert_feed_rows_sorting_and_hash_are_deterministic() -> None:
             "q10": 0.20,
             "q90": 0.90,
             "open_interest_change_1h": -0.20,
+            "ambiguity_score": 0.30,
+            "volume_velocity": 2.30,
         },
     ]
 

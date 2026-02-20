@@ -116,6 +116,7 @@ class GammaConnector:
             record_type="market",
             limit=limit,
             params=params,
+            normalize=True,
         )
 
     async def fetch_events(
@@ -129,6 +130,35 @@ class GammaConnector:
             record_type="event",
             limit=limit,
             params=params,
+            normalize=True,
+        )
+
+    async def fetch_markets_raw(
+        self,
+        *,
+        limit: int = 500,
+        params: Mapping[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self._fetch_paginated(
+            endpoint="/markets",
+            record_type="market",
+            limit=limit,
+            params=params,
+            normalize=False,
+        )
+
+    async def fetch_events_raw(
+        self,
+        *,
+        limit: int = 500,
+        params: Mapping[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self._fetch_paginated(
+            endpoint="/events",
+            record_type="event",
+            limit=limit,
+            params=params,
+            normalize=False,
         )
 
     async def _fetch_paginated(
@@ -138,6 +168,7 @@ class GammaConnector:
         record_type: str,
         limit: int,
         params: Mapping[str, Any] | None = None,
+        normalize: bool = True,
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             raise ValueError("limit must be > 0")
@@ -149,7 +180,7 @@ class GammaConnector:
         offset = int(base_params.get("offset", 0))
         force_offset_mode = "offset" in base_params
         seen_pagination_tokens: set[str] = set()
-        normalized_records: list[dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
 
         while True:
             page_params = dict(base_params)
@@ -168,9 +199,10 @@ class GammaConnector:
             if not items:
                 break
 
-            normalized_records.extend(
-                self._normalize_record(item, record_type) for item in items
-            )
+            if normalize:
+                records.extend(self._normalize_record(item, record_type) for item in items)
+            else:
+                records.extend(dict(item) for item in items)
 
             if next_cursor:
                 token = f"cursor:{next_cursor}"
@@ -198,7 +230,7 @@ class GammaConnector:
 
             break
 
-        return normalized_records
+        return records
 
     async def _request_json(
         self, *, endpoint: str, params: Mapping[str, Any] | None = None

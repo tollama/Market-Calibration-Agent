@@ -10,19 +10,31 @@ def test_evaluate_alert_threshold_overrides_with_mapping_changes_severity() -> N
         q10=0.20,
         q90=0.90,
         open_interest_change_1h=-0.10,
+        ambiguity_score=0.30,
+        volume_velocity=2.10,
     )
     override_result = evaluate_alert(
         p_yes=0.95,
         q10=0.20,
         q90=0.90,
         open_interest_change_1h=-0.10,
+        ambiguity_score=0.30,
+        volume_velocity=2.10,
         thresholds={"low_oi_confirmation": -0.05},
     )
 
-    assert default_result == {"severity": "MED", "reason_codes": ["BAND_BREACH"]}
+    assert default_result == {
+        "severity": "MED",
+        "reason_codes": ["BAND_BREACH", "LOW_AMBIGUITY", "VOLUME_SPIKE"],
+    }
     assert override_result == {
         "severity": "HIGH",
-        "reason_codes": ["BAND_BREACH", "LOW_OI_CONFIRMATION"],
+        "reason_codes": [
+            "BAND_BREACH",
+            "LOW_OI_CONFIRMATION",
+            "LOW_AMBIGUITY",
+            "VOLUME_SPIKE",
+        ],
     }
 
 
@@ -80,6 +92,9 @@ def test_build_alert_feed_rows_threshold_overrides_change_severity() -> None:
             "q10": 0.20,
             "q90": 0.90,
             "open_interest_change_1h": -0.10,
+            "ambiguity_score": 0.30,
+            "volume_velocity": 2.10,
+            "strict_gate_passed": True,
         }
     ]
 
@@ -89,8 +104,15 @@ def test_build_alert_feed_rows_threshold_overrides_change_severity() -> None:
     )
 
     assert [row["severity"] for row in default_alert_rows] == ["MED"]
+    assert default_alert_rows[0]["reason_codes"] == [
+        "BAND_BREACH",
+        "LOW_AMBIGUITY",
+        "VOLUME_SPIKE",
+    ]
     assert [row["severity"] for row in override_alert_rows] == ["HIGH"]
     assert override_alert_rows[0]["reason_codes"] == [
         "BAND_BREACH",
         "LOW_OI_CONFIRMATION",
+        "LOW_AMBIGUITY",
+        "VOLUME_SPIKE",
     ]

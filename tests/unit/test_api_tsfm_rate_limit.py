@@ -26,6 +26,7 @@ class _FakeService:
 def test_p2_11_tsfm_forecast_enforces_rate_limit_with_retry_after(monkeypatch) -> None:
     """Traceability: PRD2 P2-11 (inbound rate-limit + Retry-After semantics)."""
     monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard())
     client = TestClient(app)
 
     payload = fixture_request("D1_normal")
@@ -33,8 +34,16 @@ def test_p2_11_tsfm_forecast_enforces_rate_limit_with_retry_after(monkeypatch) -
     payload["x_future"] = {}
 
     # Burst calls; expectation is at least one 429 with retry-after metadata.
-    responses = [client.post("/tsfm/forecast", json=payload) for _ in range(8)]
+    responses = [
+        client.post(
+            "/tsfm/forecast",
+            json=payload,
+            headers={"Authorization": "Bearer tsfm-dev-token"},
+        )
+        for _ in range(8)
+    ]
 
     assert any(r.status_code == 429 for r in responses)
     limited = next(r for r in responses if r.status_code == 429)
     assert "retry-after" in {k.lower() for k in limited.headers.keys()}
+    assert int(limited.headers["Retry-After"]) >= 1

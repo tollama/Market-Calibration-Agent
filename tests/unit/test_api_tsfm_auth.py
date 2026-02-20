@@ -26,6 +26,7 @@ class _FakeService:
 def test_p2_11_tsfm_forecast_requires_inbound_auth_token(monkeypatch) -> None:
     """Traceability: PRD2 P2-11 (inbound auth control for /tsfm/forecast)."""
     monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard())
     client = TestClient(app)
 
     payload = fixture_request("D1_normal")

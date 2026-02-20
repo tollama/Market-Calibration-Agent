@@ -72,7 +72,7 @@ def _collect_messages(
     connector: PolymarketWSConnector,
     *,
     url: str,
-    subscribe_message: dict[str, Any] | None = None,
+    subscribe_message: Any = None,
     message_limit: int | None = None,
 ) -> list[dict[str, Any]]:
     async def run() -> list[dict[str, Any]]:
@@ -159,3 +159,81 @@ def test_stream_messages_skips_non_json_frames(monkeypatch: pytest.MonkeyPatch) 
     )
 
     assert payloads == [{"accepted": True}, {"accepted": False}]
+
+
+def test_stream_messages_supports_subscribe_message_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket = FakeWebSocket(['{"id": 1}'])
+    fake_ws_module = FakeWebSocketsModule([fake_socket])
+    monkeypatch.setattr(ws_module, "_websockets", fake_ws_module)
+
+    connector = PolymarketWSConnector()
+    payloads = _collect_messages(
+        connector,
+        url="wss://example.invalid/stream",
+        subscribe_message=[
+            {"type": "subscribe", "channel": "one"},
+            {"type": "subscribe", "channel": "two"},
+        ],
+        message_limit=1,
+    )
+
+    assert payloads == [{"id": 1}]
+    assert [json.loads(message) for message in fake_socket.sent_messages] == [
+        {"type": "subscribe", "channel": "one"},
+        {"type": "subscribe", "channel": "two"},
+    ]
+
+
+def test_stream_messages_supports_subscribe_callable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_socket_1 = FakeWebSocket(['{"id": 1}', FakeConnectionClosed("dropped connection")])
+    fake_socket_2 = FakeWebSocket(['{"id": 2}'])
+    fake_ws_module = FakeWebSocketsModule([fake_socket_1, fake_socket_2])
+    monkeypatch.setattr(ws_module, "_websockets", fake_ws_module)
+
+    reconnect_indices: list[int] = []
+
+    def subscribe_builder(reconnect_index: int) -> dict[str, Any]:
+        reconnect_indices.append(reconnect_index)
+        return {"type": "subscribe", "reconnect_index": reconnect_index}
+
+    connector = PolymarketWSConnector()
+    payloads = _collect_messages(
+        connector,
+        url="wss://example.invalid/stream",
+        subscribe_message=subscribe_builder,
+        message_limit=2,
+    )
+
+    assert payloads == [{"id": 1}, {"id": 2}]
+    assert reconnect_indices == [0, 1]
+    assert [json.loads(message) for message in fake_socket_1.sent_messages] == [
+        {"type": "subscribe", "reconnect_index": 0}
+    ]
+    assert [json.loads(message) for message in fake_socket_2.sent_messages] == [
+        {"type": "subscribe", "reconnect_index": 1}
+    ]
+
+
+def test_stream_messages_last_stats_increments(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_socket_1 = FakeWebSocket(["not-json", '{"id": 1}', FakeConnectionClosed("dropped")])
+    fake_socket_2 = FakeWebSocket([b"\xff", '{"id": 2}'])
+    fake_ws_module = FakeWebSocketsModule([fake_socket_1, fake_socket_2])
+    monkeypatch.setattr(ws_module, "_websockets", fake_ws_module)
+
+    connector = PolymarketWSConnector()
+    payloads = _collect_messages(
+        connector,
+        url="wss://example.invalid/stream",
+        message_limit=2,
+    )
+
+    assert payloads == [{"id": 1}, {"id": 2}]
+    assert connector.last_stats == {
+        "reconnects": 1,
+        "yielded": 2,
+        "skipped_non_json": 2,
+    }

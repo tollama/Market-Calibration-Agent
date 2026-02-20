@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
+from pipelines.common import generate_run_id
 
 
 class _WSConnector(Protocol):
@@ -320,6 +321,12 @@ def _normalize_message(message: Any) -> dict[str, Any]:
     return {"event": message}
 
 
+def _normalize_last_stats(last_stats: Any) -> Any:
+    if isinstance(last_stats, Mapping):
+        return dict(last_stats)
+    return last_stats
+
+
 async def _collect_stream_messages(
     *,
     ws_connector: _WSConnector,
@@ -362,6 +369,7 @@ async def run_realtime_ws_job(
     raw_writer: _RawWriter,
     url: str,
     dt: date | datetime | str | None = None,
+    run_id: str | None = None,
     subscribe_message: Mapping[str, Any] | None = None,
     message_limit: int = 1000,
 ) -> dict[str, Any]:
@@ -371,6 +379,7 @@ async def run_realtime_ws_job(
         subscribe_message=subscribe_message,
         message_limit=message_limit,
     )
+    resolved_run_id = run_id or generate_run_id(prefix="realtime-ws")
 
     ticks_path = raw_writer.write(
         messages,
@@ -396,19 +405,40 @@ async def run_realtime_ws_job(
         dt=dt,
         dedupe_key="bar_id",
     )
-
-    return {
+    last_stats = _normalize_last_stats(getattr(ws_connector, "last_stats", None))
+    run_metrics_record: dict[str, Any] = {
+        "run_id": resolved_run_id,
         "message_count": len(messages),
         "tick_count": len(messages),
         "deduped_tick_count": len(deduped_ticks),
         "bar_1m_count": len(bars_1m),
         "bar_5m_count": len(bars_5m),
+    }
+    if last_stats is not None:
+        run_metrics_record["last_stats"] = last_stats
+    raw_writer.write(
+        [run_metrics_record],
+        dataset="realtime_run_metrics",
+        dt=dt,
+        dedupe_key="run_id",
+    )
+
+    summary: dict[str, Any] = {
+        "message_count": len(messages),
+        "tick_count": len(messages),
+        "deduped_tick_count": len(deduped_ticks),
+        "bar_1m_count": len(bars_1m),
+        "bar_5m_count": len(bars_5m),
+        "run_id": resolved_run_id,
         "output_paths": {
             "realtime_ticks": str(ticks_path),
             "realtime_bars_1m": str(bars_1m_path),
             "realtime_bars_5m": str(bars_5m_path),
         },
     }
+    if last_stats is not None:
+        summary["last_stats"] = last_stats
+    return summary
 
 
 def run_realtime_ws_job_sync(
@@ -417,6 +447,7 @@ def run_realtime_ws_job_sync(
     raw_writer: _RawWriter,
     url: str,
     dt: date | datetime | str | None = None,
+    run_id: str | None = None,
     subscribe_message: Mapping[str, Any] | None = None,
     message_limit: int = 1000,
 ) -> dict[str, Any]:
@@ -426,6 +457,7 @@ def run_realtime_ws_job_sync(
             raw_writer=raw_writer,
             url=url,
             dt=dt,
+            run_id=run_id,
             subscribe_message=subscribe_message,
             message_limit=message_limit,
         )

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .build_cutoff_snapshots import stage_build_cutoff_snapshots
+from .build_cutoff_snapshots import build_cutoff_snapshots, stage_build_cutoff_snapshots
 from .common import (
     PipelineResult,
     PipelineRunContext,
@@ -36,11 +38,82 @@ def _count_items(value: Any) -> int:
         return 0
 
 
+def _to_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _resolve_stage_hook(context: PipelineRunContext, key: str) -> Any:
     hook = context.state.get(key)
     if callable(hook):
         return hook
     return None
+
+
+def _row_to_dict(row: Any) -> dict[str, Any] | None:
+    if isinstance(row, Mapping):
+        return dict(row)
+
+    if is_dataclass(row) and not isinstance(row, type):
+        return asdict(row)
+
+    model_dump = getattr(row, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, Mapping):
+            return dict(dumped)
+
+    attributes = getattr(row, "__dict__", None)
+    if isinstance(attributes, dict):
+        return {key: value for key, value in attributes.items() if not key.startswith("_")}
+    return None
+
+
+def _rows_to_dicts(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        try:
+            records = to_dict(orient="records")
+        except TypeError:
+            try:
+                records = to_dict()
+            except Exception:  # pragma: no cover - defensive conversion fallback
+                records = None
+        except Exception:  # pragma: no cover - defensive conversion fallback
+            records = None
+        if isinstance(records, list):
+            return [row for row in (_row_to_dict(item) for item in records) if row is not None]
+
+    if isinstance(value, Mapping):
+        row = _row_to_dict(value)
+        return [row] if row is not None else []
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [row for row in (_row_to_dict(item) for item in value) if row is not None]
+
+    row = _row_to_dict(value)
+    return [row] if row is not None else []
+
+
+def _normalize_market_ids(value: Any) -> list[str]:
+    market_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_market_id in _as_list(value):
+        market_id = str(raw_market_id).strip()
+        if not market_id or market_id in seen:
+            continue
+        market_ids.append(market_id)
+        seen.add(market_id)
+    return market_ids
+
+
+def _infer_market_ids(rows: Any) -> list[str]:
+    return _normalize_market_ids([row.get("market_id") for row in _rows_to_dicts(rows)])
 
 
 def _fallback_stage_build_features(context: PipelineRunContext) -> dict[str, Any]:
@@ -62,6 +135,71 @@ except ModuleNotFoundError as exc:
     stage_build_features = _fallback_stage_build_features
 
 
+def _fallback_link_registry_to_snapshots(
+    snapshot_rows: list[dict[str, Any]],
+    registry_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    _ = registry_rows
+    return list(snapshot_rows)
+
+
+try:
+    from .registry_linker import link_registry_to_snapshots
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.registry_linker", "registry_linker"}:
+        raise
+    link_registry_to_snapshots = _fallback_link_registry_to_snapshots
+
+
+def _fallback_build_scoreboard_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    _ = rows
+    return [], {}
+
+
+try:
+    from .build_scoreboard_artifacts import build_scoreboard_rows
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.build_scoreboard_artifacts", "build_scoreboard_artifacts"}:
+        raise
+    build_scoreboard_rows = _fallback_build_scoreboard_rows
+
+
+def _fallback_build_alert_feed_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    _ = rows
+    return []
+
+
+try:
+    from .build_alert_feed import build_alert_feed_rows
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.build_alert_feed", "build_alert_feed"}:
+        raise
+    build_alert_feed_rows = _fallback_build_alert_feed_rows
+
+
+def _fallback_build_and_write_postmortems(
+    events: list[dict[str, Any]],
+    *,
+    root: str,
+) -> dict[str, Any]:
+    _ = root
+    return {
+        "written_count": 0,
+        "skipped_count": _count_items(events),
+        "output_paths": [],
+    }
+
+
+try:
+    from .build_postmortem_batch import build_and_write_postmortems
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.build_postmortem_batch", "build_postmortem_batch"}:
+        raise
+    build_and_write_postmortems = _fallback_build_and_write_postmortems
+
+
 DAILY_STAGE_NAMES = (
     "discover",
     "ingest",
@@ -75,10 +213,7 @@ DAILY_STAGE_NAMES = (
 
 
 def _stage_discover(context: PipelineRunContext) -> dict[str, Any]:
-    if "market_ids" not in context.state:
-        context.state["market_ids"] = []
-    else:
-        context.state["market_ids"] = _as_list(context.state["market_ids"])
+    context.state["market_ids"] = _normalize_market_ids(context.state.get("market_ids"))
     return {
         "stage": "discover",
         "market_count": _count_items(context.state["market_ids"]),
@@ -88,40 +223,113 @@ def _stage_discover(context: PipelineRunContext) -> dict[str, Any]:
 def _stage_ingest(context: PipelineRunContext) -> dict[str, Any]:
     hook = _resolve_stage_hook(context, "ingest_fn")
     if hook is None:
-        context.state.setdefault("raw_records", [])
+        raw_records = context.state.get("raw_records")
+        if raw_records is None:
+            raw_records = context.state.get("ingest_rows")
+        if raw_records is None:
+            raw_records = context.state.get("gamma_markets")
+        normalized_raw_records = _rows_to_dicts(raw_records)
+        if normalized_raw_records:
+            context.state["raw_records"] = normalized_raw_records
+        else:
+            context.state.setdefault("raw_records", [])
+
+        events = context.state.get("events")
+        if events is None:
+            events = context.state.get("event_rows")
+        if events is None:
+            events = context.state.get("gamma_events")
+        if events is not None:
+            context.state["events"] = _rows_to_dicts(events)
+
+        if _count_items(context.state.get("market_ids")) == 0:
+            inferred_market_ids = _infer_market_ids(context.state.get("raw_records"))
+            if inferred_market_ids:
+                context.state["market_ids"] = inferred_market_ids
         output = {}
     else:
         output = dict(hook(context))
     output.setdefault("stage", "ingest")
     output.setdefault("market_count", _count_items(context.state.get("market_ids")))
     output.setdefault("raw_record_count", _count_items(context.state.get("raw_records")))
+    output.setdefault("event_count", _count_items(context.state.get("events")))
     return output
 
 
 def _stage_normalize(context: PipelineRunContext) -> dict[str, Any]:
-    context.state.setdefault("normalized_records", [])
+    normalized_records = context.state.get("normalized_records")
+    if normalized_records is None:
+        normalized_records = _rows_to_dicts(context.state.get("raw_records"))
+    else:
+        normalized_records = _rows_to_dicts(normalized_records)
+    context.state["normalized_records"] = normalized_records
+
+    if _count_items(context.state.get("market_ids")) == 0:
+        inferred_market_ids = _infer_market_ids(normalized_records)
+        if inferred_market_ids:
+            context.state["market_ids"] = inferred_market_ids
     return {
         "stage": "normalize",
         "raw_record_count": _count_items(context.state.get("raw_records")),
-        "normalized_record_count": _count_items(context.state["normalized_records"]),
+        "normalized_record_count": _count_items(normalized_records),
     }
 
 
 def _stage_snapshots(context: PipelineRunContext) -> dict[str, Any]:
-    context.state.setdefault("snapshots", [])
+    snapshot_rows = _rows_to_dicts(context.state.get("snapshots"))
+    if not snapshot_rows:
+        snapshot_rows = _rows_to_dicts(context.state.get("normalized_records"))
+
+    registry_rows = _rows_to_dicts(context.state.get("registry_rows"))
+    enriched_snapshot_rows = snapshot_rows
+    if snapshot_rows and registry_rows:
+        try:
+            enriched_snapshot_rows = _rows_to_dicts(
+                link_registry_to_snapshots(snapshot_rows, registry_rows)
+            )
+        except Exception:  # pragma: no cover - optional integration fallback
+            enriched_snapshot_rows = snapshot_rows
+
+    context.state["snapshots"] = enriched_snapshot_rows
     return {
         "stage": "snapshots",
         "normalized_record_count": _count_items(context.state.get("normalized_records")),
-        "snapshot_count": _count_items(context.state["snapshots"]),
+        "registry_row_count": _count_items(registry_rows),
+        "snapshot_count": _count_items(enriched_snapshot_rows),
     }
 
 
 def _stage_cutoff(context: PipelineRunContext) -> dict[str, Any]:
     hook = _resolve_stage_hook(context, "cutoff_fn")
-    handler = hook if hook is not None else stage_build_cutoff_snapshots
-    output = dict(handler(context))
+    source_snapshot_rows = _rows_to_dicts(context.state.get("snapshots"))
+    market_ids = _normalize_market_ids(context.state.get("market_ids"))
+    if not market_ids:
+        market_ids = _infer_market_ids(source_snapshot_rows)
+        if market_ids:
+            context.state["market_ids"] = market_ids
+
+    if hook is not None:
+        output = dict(hook(context))
+    elif source_snapshot_rows:
+        try:
+            cutoff_snapshots = build_cutoff_snapshots(
+                market_ids=market_ids,
+                source_rows=source_snapshot_rows,
+            )
+            context.state["cutoff_snapshots"] = cutoff_snapshots
+            context.state["cutoff_snapshot_rows"] = _rows_to_dicts(cutoff_snapshots)
+            output = {"source_snapshot_count": _count_items(source_snapshot_rows)}
+        except Exception:  # pragma: no cover - optional integration fallback
+            output = dict(stage_build_cutoff_snapshots(context))
+    else:
+        output = dict(stage_build_cutoff_snapshots(context))
+
+    if "cutoff_snapshot_rows" not in context.state:
+        context.state["cutoff_snapshot_rows"] = _rows_to_dicts(context.state.get("cutoff_snapshots"))
+
     output.setdefault("stage", "cutoff")
     output.setdefault("market_count", _count_items(context.state.get("market_ids")))
+    output.setdefault("source_snapshot_count", _count_items(source_snapshot_rows))
     output.setdefault("snapshot_count", _count_items(context.state.get("cutoff_snapshots")))
     return output
 
@@ -130,12 +338,27 @@ def _stage_features(context: PipelineRunContext) -> dict[str, Any]:
     hook = _resolve_stage_hook(context, "feature_fn")
     handler = hook if hook is not None else stage_build_features
     output = dict(handler(context))
+
+    feature_rows = context.state.get("features")
+    if feature_rows is None:
+        feature_rows = context.state.get("feature_rows")
+    if feature_rows is None:
+        feature_rows = _rows_to_dicts(context.state.get("feature_frame"))
+        if feature_rows:
+            context.state["feature_rows"] = feature_rows
+
+    if feature_rows is None:
+        feature_rows = []
+    else:
+        feature_rows = _rows_to_dicts(feature_rows)
+        if "feature_rows" not in context.state:
+            context.state["feature_rows"] = feature_rows
+    if "features" not in context.state:
+        context.state["features"] = feature_rows
+
     output.setdefault("stage", "features")
     output.setdefault("market_count", _count_items(context.state.get("market_ids")))
     if "feature_count" not in output:
-        feature_rows = context.state.get("features")
-        if feature_rows is None:
-            feature_rows = context.state.get("feature_rows")
         output["feature_count"] = _count_items(feature_rows)
     return output
 
@@ -143,28 +366,107 @@ def _stage_features(context: PipelineRunContext) -> dict[str, Any]:
 def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
     hook = _resolve_stage_hook(context, "metric_fn")
     if hook is None:
-        context.state.setdefault("metrics", [])
+        metric_source_rows = _rows_to_dicts(context.state.get("metric_rows"))
+        if not metric_source_rows:
+            feature_rows = context.state.get("features")
+            if feature_rows is None:
+                feature_rows = context.state.get("feature_rows")
+            if feature_rows is None:
+                feature_rows = _rows_to_dicts(context.state.get("feature_frame"))
+                if feature_rows:
+                    context.state["feature_rows"] = feature_rows
+            metric_source_rows = _rows_to_dicts(feature_rows)
+
+        scoreboard_rows: list[dict[str, Any]] = []
+        summary_metrics: dict[str, Any] = {}
+        if metric_source_rows:
+            try:
+                raw_scoreboard_rows, raw_summary_metrics = build_scoreboard_rows(metric_source_rows)
+                scoreboard_rows = _rows_to_dicts(raw_scoreboard_rows)
+                if isinstance(raw_summary_metrics, Mapping):
+                    summary_metrics = dict(raw_summary_metrics)
+            except Exception:  # pragma: no cover - optional integration fallback
+                scoreboard_rows = []
+                summary_metrics = {}
+        context.state["scoreboard_rows"] = scoreboard_rows
+        context.state["summary_metrics"] = summary_metrics
+
+        alert_feed_rows: list[dict[str, Any]] = []
+        if metric_source_rows:
+            try:
+                alert_feed_rows = _rows_to_dicts(build_alert_feed_rows(metric_source_rows))
+            except Exception:  # pragma: no cover - optional integration fallback
+                alert_feed_rows = []
+        context.state["alert_feed_rows"] = alert_feed_rows
+
+        if "metrics" not in context.state:
+            context.state["metrics"] = scoreboard_rows
         output = {}
     else:
         output = dict(hook(context))
+
     feature_rows = context.state.get("features")
     if feature_rows is None:
         feature_rows = context.state.get("feature_rows")
     output.setdefault("stage", "metrics")
     output.setdefault("feature_count", _count_items(feature_rows))
     output.setdefault("metric_count", _count_items(context.state.get("metrics")))
+    output.setdefault("scoreboard_count", _count_items(context.state.get("scoreboard_rows")))
+    output.setdefault("alert_count", _count_items(context.state.get("alert_feed_rows")))
     return output
 
 
 def _stage_publish(context: PipelineRunContext) -> dict[str, Any]:
     hook = _resolve_stage_hook(context, "publish_fn")
     if hook is None:
-        context.state.setdefault("published_records", [])
+        if "published_records" not in context.state:
+            published_records = _rows_to_dicts(context.state.get("metrics"))
+            if not published_records:
+                published_records = _rows_to_dicts(context.state.get("scoreboard_rows"))
+            context.state["published_records"] = published_records
+
+        events = context.state.get("events")
+        if events is None:
+            events = context.state.get("event_rows")
+        postmortem_payload: dict[str, Any] | None = None
+        event_rows = _rows_to_dicts(events)
+        if event_rows:
+            root = context.state.get("postmortem_root")
+            if root is None:
+                root = context.state.get("root_path")
+            if root is None:
+                root = "."
+            try:
+                maybe_postmortem_payload = build_and_write_postmortems(
+                    event_rows,
+                    root=str(root),
+                )
+                if isinstance(maybe_postmortem_payload, Mapping):
+                    postmortem_payload = dict(maybe_postmortem_payload)
+            except Exception:  # pragma: no cover - optional integration fallback
+                postmortem_payload = _fallback_build_and_write_postmortems(
+                    event_rows,
+                    root=str(root),
+                )
+            if postmortem_payload is not None:
+                context.state["postmortem_artifacts"] = postmortem_payload
         output = {}
     else:
         output = dict(hook(context))
+
+    postmortem_artifacts = context.state.get("postmortem_artifacts")
+    if isinstance(postmortem_artifacts, Mapping):
+        postmortem_written_count = _to_int(postmortem_artifacts.get("written_count"))
+        postmortem_skipped_count = _to_int(postmortem_artifacts.get("skipped_count"))
+    else:
+        postmortem_written_count = 0
+        postmortem_skipped_count = 0
+
     output.setdefault("stage", "publish")
     output.setdefault("metric_count", _count_items(context.state.get("metrics")))
+    output.setdefault("alert_count", _count_items(context.state.get("alert_feed_rows")))
+    output.setdefault("postmortem_written_count", postmortem_written_count)
+    output.setdefault("postmortem_skipped_count", postmortem_skipped_count)
     output.setdefault("published_count", _count_items(context.state.get("published_records")))
     return output
 

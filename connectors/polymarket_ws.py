@@ -35,6 +35,11 @@ class PolymarketWSConnector:
         self.reconnect_base = reconnect_base
         self.reconnect_max = reconnect_max
         self.max_retries = max_retries
+        self.last_stats: dict[str, int] = {
+            "reconnects": 0,
+            "yielded": 0,
+            "skipped_non_json": 0,
+        }
 
     async def stream_messages(
         self,
@@ -43,6 +48,11 @@ class PolymarketWSConnector:
         subscribe_message: Any = None,
         message_limit: int | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
+        self.last_stats = {
+            "reconnects": 0,
+            "yielded": 0,
+            "skipped_non_json": 0,
+        }
         if message_limit is not None and message_limit < 0:
             raise ValueError("message_limit must be >= 0 when provided")
 
@@ -53,6 +63,7 @@ class PolymarketWSConnector:
         connection_errors = self._connection_error_types(ws_module)
         yielded = 0
         retries = 0
+        reconnect_index = 0
 
         while message_limit is None or yielded < message_limit:
             try:
@@ -61,16 +72,22 @@ class PolymarketWSConnector:
                     ping_interval=self.ping_interval,
                 ) as websocket:
                     retries = 0
-                    if subscribe_message is not None:
-                        await websocket.send(json.dumps(subscribe_message))
+                    subscribe_messages = self._resolve_subscribe_messages(
+                        subscribe_message=subscribe_message,
+                        reconnect_index=reconnect_index,
+                    )
+                    for message in subscribe_messages:
+                        await websocket.send(json.dumps(message))
 
                     async for frame in websocket:
                         payload = self._decode_json_dict(frame)
                         if payload is None:
+                            self.last_stats["skipped_non_json"] += 1
                             continue
 
                         yield payload
                         yielded += 1
+                        self.last_stats["yielded"] = yielded
                         if message_limit is not None and yielded >= message_limit:
                             return
 
@@ -83,7 +100,38 @@ class PolymarketWSConnector:
 
                 delay = min(self.reconnect_base * (2**retries), self.reconnect_max)
                 retries += 1
+                reconnect_index += 1
+                self.last_stats["reconnects"] = reconnect_index
                 await asyncio.sleep(delay)
+
+    @staticmethod
+    def _resolve_subscribe_messages(
+        *,
+        subscribe_message: Any,
+        reconnect_index: int,
+    ) -> list[dict[str, Any]]:
+        if subscribe_message is None:
+            return []
+
+        if callable(subscribe_message):
+            subscribe_message = subscribe_message(reconnect_index)
+            if not isinstance(subscribe_message, dict):
+                raise TypeError(
+                    "subscribe_message callable must return a dict."
+                )
+            return [subscribe_message]
+
+        if isinstance(subscribe_message, dict):
+            return [subscribe_message]
+
+        if isinstance(subscribe_message, list) and all(
+            isinstance(message, dict) for message in subscribe_message
+        ):
+            return subscribe_message
+
+        raise TypeError(
+            "subscribe_message must be a dict, list[dict], or callable."
+        )
 
     @staticmethod
     def _require_websockets() -> Any:

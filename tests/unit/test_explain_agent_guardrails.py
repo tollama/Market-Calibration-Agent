@@ -51,6 +51,8 @@ def test_explain_prepends_evidence_guardrail_instruction() -> None:
     assert len(backend.calls) == 1
     user_prompt = backend.calls[0]["user_prompt"]
     assert isinstance(user_prompt, str)
-    assert user_prompt.startswith("If the provided text lacks evidence for a claim,")
+    assert user_prompt.startswith("Every claim must be grounded only in the provided text.")
+    assert "Do not add external facts, numbers, dates, causes, or forecasts." in user_prompt
+    assert "If evidence is weak or missing for any claim" in user_prompt
     assert "explicitly state uncertainty" in user_prompt
-    assert "do not invent facts" in user_prompt
+    assert "avoid definitive wording" in user_prompt

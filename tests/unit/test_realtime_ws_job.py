@@ -8,14 +8,22 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import pipelines.realtime_ws_job as realtime_ws_job
 from pipelines.realtime_ws_job import run_realtime_ws_job, run_realtime_ws_job_sync
 from storage.writers import RawWriter
 
 
 class FakeWSConnector:
-    def __init__(self, messages: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        last_stats: Mapping[str, Any] | None = None,
+    ) -> None:
         self._messages = messages
         self.calls: list[dict[str, Any]] = []
+        if last_stats is not None:
+            self.last_stats = dict(last_stats)
 
     async def stream_messages(
         self,
@@ -315,3 +323,64 @@ def test_run_realtime_ws_job_sync_respects_message_limit(monkeypatch, tmp_path: 
     assert bars_1m_path.exists()
     assert bars_5m_path.exists()
     assert len(_read_jsonl(ticks_path)) == 2
+
+
+def test_run_realtime_ws_job_writes_run_metrics_and_passthrough_last_stats(
+    monkeypatch, tmp_path: Path
+) -> None:
+    aggregate_module = types.ModuleType("pipelines.aggregate_intraday_bars")
+    aggregate_module.build_time_bars = lambda ticks, *args, **kwargs: []
+    aggregate_module.resample_to_5m = lambda bars_1m, *args, **kwargs: []
+    monkeypatch.setitem(sys.modules, "pipelines.aggregate_intraday_bars", aggregate_module)
+
+    def fake_generate_run_id(prefix: str = "daily") -> str:
+        assert prefix == "realtime-ws"
+        return "realtime-ws-20260220T120000Z"
+
+    monkeypatch.setattr(realtime_ws_job, "generate_run_id", fake_generate_run_id)
+
+    connector = FakeWSConnector(
+        [
+            {
+                "event_id": "dup-1",
+                "market_id": "mkt-9",
+                "timestamp": "2026-02-20T12:00:10Z",
+                "price": 0.40,
+                "size": 1.0,
+            },
+            {
+                "event_id": "dup-1",
+                "market_id": "mkt-9",
+                "timestamp": "2026-02-20T12:00:15Z",
+                "price": 0.41,
+                "size": 2.0,
+            },
+        ],
+        last_stats={"messages_seen": 2, "disconnects": 0},
+    )
+    writer = RawWriter(tmp_path)
+
+    summary = run_realtime_ws_job_sync(
+        ws_connector=connector,
+        raw_writer=writer,
+        url="wss://example.test/metrics",
+        dt="2026-02-20",
+        message_limit=100,
+    )
+
+    metrics_path = tmp_path / "raw" / "realtime_run_metrics" / "dt=2026-02-20" / "data.jsonl"
+    assert summary["run_id"] == "realtime-ws-20260220T120000Z"
+    assert summary["last_stats"] == {"messages_seen": 2, "disconnects": 0}
+    assert "realtime_run_metrics" not in summary["output_paths"]
+    assert metrics_path.exists()
+    assert _read_jsonl(metrics_path) == [
+        {
+            "run_id": "realtime-ws-20260220T120000Z",
+            "message_count": 2,
+            "tick_count": 2,
+            "deduped_tick_count": 1,
+            "bar_1m_count": 0,
+            "bar_5m_count": 0,
+            "last_stats": {"messages_seen": 2, "disconnects": 0},
+        }
+    ]

@@ -8,15 +8,19 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from agents.alert_agent import evaluate_alert
+from agents.alert_agent import AlertThresholdConfig, evaluate_alert
 
 _REQUIRED_ROW_KEYS: tuple[str, ...] = ("market_id", "ts", "p_yes", "q10", "q90")
-_SEVERITY_PRIORITY: dict[str, int] = {"HIGH": 0, "MED": 1}
-_SUPPORTED_SEVERITIES: set[str] = set(_SEVERITY_PRIORITY)
+_SEVERITY_PRIORITY: dict[str, int] = {"HIGH": 0, "MED": 1, "FYI": 2}
 
 
-def build_alert_feed_rows(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
-    """Build alert feed rows, excluding FYI alerts by default."""
+def build_alert_feed_rows(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    thresholds: AlertThresholdConfig | None = None,
+    include_fyi: bool = False,
+) -> list[dict[str, object]]:
+    """Build alert feed rows, excluding FYI alerts unless include_fyi=True."""
     alert_rows: list[dict[str, object]] = []
 
     for idx, row in enumerate(rows):
@@ -40,10 +44,13 @@ def build_alert_feed_rows(rows: Sequence[Mapping[str, object]]) -> list[dict[str
             open_interest_change_1h=open_interest_change_1h,
             ambiguity_score=ambiguity_score,
             volume_velocity=volume_velocity,
+            thresholds=thresholds,
         )
 
         severity = str(evaluation["severity"])
-        if severity not in _SUPPORTED_SEVERITIES:
+        if severity not in _SEVERITY_PRIORITY:
+            continue
+        if severity == "FYI" and not include_fyi:
             continue
 
         reason_codes = [str(code) for code in evaluation.get("reason_codes", [])]

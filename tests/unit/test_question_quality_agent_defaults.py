@@ -31,9 +31,10 @@ class _StubBackend:
             }
         )
         return (
-            '{"ambiguity_score":0.18,"resolution_risk_score":0.27,'
+            '{"market_id":"unknown_market","ambiguity_score":0.18,"resolution_risk_score":0.27,'
             '"trigger_events":[{"type":"deadline","date":"2026-03-01"}],'
-            '"rationale_bullets":["Question is specific and includes a time horizon."]}'
+            '"rationale_bullets":["Question is specific and includes a time horizon."],'
+            '"llm_model":"gpt-5.3-codex","prompt_version":"question_quality_v1"}'
         )
 
 
@@ -47,6 +48,7 @@ def test_evaluate_falls_back_to_default_model_when_model_is_empty() -> None:
     assert len(backend.calls) == 1
     assert backend.calls[0]["model"] == DEFAULT_MODEL
     assert backend.calls[0]["temperature"] == DEFAULT_TEMPERATURE
+    assert "Market ID:\nunknown_market\n" in str(backend.calls[0]["user_prompt"])
 
 
 def test_evaluate_uses_default_temperature_with_explicit_model() -> None:
@@ -54,8 +56,9 @@ def test_evaluate_uses_default_temperature_with_explicit_model() -> None:
     client = LLMClient(backend=backend)
     agent = QuestionQualityAgent(client=client, model="gpt-custom")
 
-    agent.evaluate("What evidence supports this forecast?")
+    agent.evaluate("What evidence supports this forecast?", market_id="market-abc")
 
     assert len(backend.calls) == 1
     assert backend.calls[0]["model"] == "gpt-custom"
     assert backend.calls[0]["temperature"] == DEFAULT_TEMPERATURE
+    assert "Market ID:\nmarket-abc\n" in str(backend.calls[0]["user_prompt"])

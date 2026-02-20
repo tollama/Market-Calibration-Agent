@@ -15,18 +15,27 @@ class StrictJSONError(ValueError):
 class QuestionQualityResult:
     """Result schema for question quality scoring."""
 
+    market_id: str
     ambiguity_score: float
     resolution_risk_score: float
     trigger_events: list[dict]
     rationale_bullets: list[str]
+    llm_model: str
+    prompt_version: str
 
     def __post_init__(self) -> None:
+        if not self.market_id.strip():
+            raise StrictJSONError("market_id must be a non-empty string")
         if self.ambiguity_score < 0 or self.ambiguity_score > 1:
             raise StrictJSONError("ambiguity_score must be between 0 and 1")
         if self.resolution_risk_score < 0 or self.resolution_risk_score > 1:
             raise StrictJSONError("resolution_risk_score must be between 0 and 1")
         if len(self.rationale_bullets) < 1 or len(self.rationale_bullets) > 5:
             raise StrictJSONError("rationale_bullets must contain between 1 and 5 items")
+        if not self.llm_model.strip():
+            raise StrictJSONError("llm_model must be a non-empty string")
+        if not self.prompt_version.strip():
+            raise StrictJSONError("prompt_version must be a non-empty string")
 
 
 @dataclass(frozen=True)

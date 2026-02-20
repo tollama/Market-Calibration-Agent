@@ -5,9 +5,9 @@
 
 ## Python 런타임 요구사항
 - 최소 버전: **Python 3.11+**
-- 기본 인터프리터: `PRD2_VERIFY_PYTHON_BIN` (기본값 `python3`)
+- 기본 인터프리터: `PRD2_VERIFY_PYTHON_BIN` (기본값 `python3.11`)
 
-기본 `python3`가 3.11 미만이면 아래처럼 명시 실행하세요.
+기본 `python3`가 3.11 미만인 환경은 아래처럼 명시 실행하세요.
 
 ```bash
 PRD2_VERIFY_PYTHON_BIN=python3.11 scripts/prd2_verify_all.sh
@@ -28,6 +28,7 @@ scripts/prd2_verify_all.sh
 
 ## 출력 아티팩트
 - 요약 JSON: `artifacts/prd2_verify_summary.json`
+- 릴리스 감사 JSON: `artifacts/prd2_release_audit_report.json`
 - 단계별 로그: `artifacts/prd2_verify_logs/*.log`
 
 `artifacts/prd2_verify_summary.json` 예시 필드:
@@ -62,6 +63,7 @@ PRD2_VERIFY_PYTHON_BIN=python3.11 scripts/prd2_verify_all.sh
 
 CI 업로드 권장 아티팩트:
 - `artifacts/prd2_verify_summary.json`
+- `artifacts/prd2_release_audit_report.json`
 - `artifacts/prd2_verify_logs/`
 
 예: 실패 여부를 요약 JSON으로 재판정하려면 `overall_status == "success"`를 확인합니다.

@@ -24,7 +24,7 @@ jobs:
 
       - name: Run deterministic TSFM perf benchmark
         run: |
-          PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py \
+          PYTHONPATH=. python pipelines/bench_tsfm_runner_perf.py \
             --requests 200 \
             --unique 20 \
             --adapter-latency-ms 15 \
@@ -34,7 +34,7 @@ jobs:
 
       - name: Parse and validate perf output
         run: |
-          python3 scripts/validate_prd2_perf_bench.py \
+          python scripts/validate_prd2_perf_bench.py \
             --input prd2-bench.log \
             --output prd2-bench-result.json \
             --p95-threshold-ms 300 \

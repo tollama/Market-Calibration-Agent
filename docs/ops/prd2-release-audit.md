@@ -31,8 +31,10 @@ The auditor validates:
 
 1. Required files/artifacts exist.
 2. Required verification commands pass.
-3. Overall status for **blockers** and **P1** is reported as PASS/FAIL.
-4. Python runtime precheck (3.11+) passes before command gates run.
+3. CI workflow wiring includes PRD1 acceptance gap-closure checks (`I-01/I-15/I-20`).
+4. CI workflow wiring includes PRD1+PRD2 gap-closure jobs.
+5. Overall status for **blockers** and **P1** is reported as PASS/FAIL.
+6. Python runtime precheck (3.11+) passes before command gates run.
 
 ## Usage
 
@@ -54,6 +56,12 @@ PYTHON_BIN=python3.11 python3 scripts/prd2_release_audit.py
 python3 scripts/prd2_release_audit.py --json
 ```
 
+### Write JSON artifact file
+
+```bash
+python3 scripts/prd2_release_audit.py --output-json artifacts/prd2_release_audit_report.json
+```
+
 ### Skip command execution (file-only audit)
 
 ```bash
@@ -67,6 +75,15 @@ python3 scripts/prd2_release_audit.py \
   --checklist docs/ops/prd2-release-checklist.yaml \
   --repo-root .
 ```
+
+## PASS criteria
+
+Audit PASS requires:
+- `summary.blockers == PASS` (all blocker checks passed)
+- `summary.p1 == PASS` (or only WARN for allowed live-integration skip policy)
+- no missing/failed blocker items in `missing_items`
+
+In practice, release gate should treat any blocker fail as hard stop.
 
 ## Exit codes
 

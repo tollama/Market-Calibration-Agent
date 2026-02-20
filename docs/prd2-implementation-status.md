@@ -133,6 +133,13 @@ PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 200 --unique
   - `elapsed_s <= 60`
 - 기대 출력: 마지막 줄 `SLO_PASS`
 
+## PRD1+PRD2 CI-release gap closure
+- CI(`.github/workflows/ci.yml`)에 `prd2-release-gate` 잡을 추가해 PRD2 원커맨드 게이트(`scripts/prd2_verify_all.sh`)를 필수 통과 조건으로 승격.
+- CI unit 잡에 PRD1 핵심 AC 회귀(`I-01/I-15/I-20`)를 명시 게이트로 추가해 요구사항 기반 실패 지점을 빠르게 식별 가능하게 정렬.
+- PRD2 게이트 결과물(`prd2_verify_summary.json`, `prd2_release_audit_report.json`, 단계 로그)을 CI 아티팩트로 업로드하도록 보강.
+- `scripts/prd2_verify_all.sh`/`scripts/prd2_release_audit.py` 기본 인터프리터를 `python3.11`로 고정하고, JSON 직렬화 경로까지 동일 인터프리터를 사용하도록 통일.
+- release audit 스크립트에 `--output-json` 옵션을 추가해 릴리스 증적(report artifact) 자동 수집을 지원.
+
 ## PRD1+PRD2 regression sweep
 - 실행 시각: 2026-02-21 05:22 (KST)
 - Python: `python3.11`

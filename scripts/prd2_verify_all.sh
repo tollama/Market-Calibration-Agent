@@ -7,7 +7,7 @@ ARTIFACT_DIR="${ROOT_DIR}/artifacts"
 LOG_DIR="${ARTIFACT_DIR}/prd2_verify_logs"
 SUMMARY_PATH="${ARTIFACT_DIR}/prd2_verify_summary.json"
 DRY_RUN="${PRD2_VERIFY_DRY_RUN:-0}"
-PYTHON_BIN="${PRD2_VERIFY_PYTHON_BIN:-python3}"
+PYTHON_BIN="${PRD2_VERIFY_PYTHON_BIN:-python3.11}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -16,7 +16,7 @@ log() {
 }
 
 json_escape() {
-  python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])'
+  "${PYTHON_BIN}" -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])'
 }
 
 STEP_ROWS=""
@@ -88,7 +88,7 @@ run_step() {
 run_step "PRD2 unit selection" "${PYTHON_BIN} -m pytest -q tests/unit/test_tsfm_runner_service.py tests/unit/test_tsfm_perf_smoke.py tests/unit/test_api_tsfm_forecast.py tests/unit/test_tsfm_model_license_guard.py tests/unit/test_baseline_bands.py tests/unit/test_tsfm_base_contract.py" 1
 run_step "PRD2 integration selection" "${PYTHON_BIN} -m pytest -q tests/integration/test_tollama_live_integration.py" 2
 run_step "PRD2 performance benchmark" "PYTHONPATH=. ${PYTHON_BIN} pipelines/bench_tsfm_runner_perf.py --requests 200 --unique 20 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60" 3
-run_step "PRD2 release audit" "PYTHON_BIN=${PYTHON_BIN} ${PYTHON_BIN} scripts/prd2_release_audit.py --python-bin ${PYTHON_BIN}" 4
+run_step "PRD2 release audit" "PYTHON_BIN=${PYTHON_BIN} ${PYTHON_BIN} scripts/prd2_release_audit.py --python-bin ${PYTHON_BIN} --output-json artifacts/prd2_release_audit_report.json" 4
 
 END_EPOCH="$(date +%s)"
 END_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"

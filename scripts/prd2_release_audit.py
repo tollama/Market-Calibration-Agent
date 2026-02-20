@@ -346,13 +346,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--python-bin",
-        default=os.environ.get("PYTHON_BIN", "python3"),
-        help="Python interpreter used for command checks (default: PYTHON_BIN env or python3)",
+        default=os.environ.get("PYTHON_BIN", "python3.11"),
+        help="Python interpreter used for command checks (default: PYTHON_BIN env or python3.11)",
     )
     parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON report to stdout",
+    )
+    parser.add_argument(
+        "--output-json",
+        default=None,
+        help="Optional path to write JSON report artifact",
     )
     return parser.parse_args()
 
@@ -386,6 +391,11 @@ def main() -> int:
     except Exception as exc:  # pragma: no cover
         print(f"Audit error: {exc}", file=sys.stderr)
         return 2
+
+    if args.output_json:
+        output_path = Path(args.output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))

@@ -65,6 +65,18 @@ release_blockers:
     type: command
     command: "PYTHONPATH=. {PYTHON_BIN} pipelines/bench_tsfm_runner_perf.py --requests 60 --unique 20 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60"
     timeout_s: 240
+  - id: RB-012
+    title: CI includes PRD1 acceptance gap-closure selection (I-01/I-15/I-20)
+    severity: blocker
+    type: command
+    command: "{PYTHON_BIN} -c \"from pathlib import Path; c=Path('.github/workflows/ci.yml').read_text(encoding='utf-8'); req=['test_i01_acceptance.py','test_i15_acceptance.py','test_i20_acceptance.py']; missing=[r for r in req if r not in c]; raise SystemExit(1 if missing else 0)\""
+    timeout_s: 60
+
+  - id: RB-013
+    title: PRD2 verify script exists
+    severity: blocker
+    type: file
+    path: scripts/prd2_verify_all.sh
 
 p1_items:
   - id: P1-001
@@ -78,16 +90,22 @@ p1_items:
     type: file
     path: docs/ops/tsfm-canary-rollout-runbook.md
   - id: P1-003
-    title: CI workflow includes PRD2 checks
+    title: CI workflow file exists
     severity: p1
     type: file
     path: .github/workflows/ci.yml
   - id: P1-004
+    title: CI workflow wires PRD1+PRD2 gap-closure gates
+    severity: p1
+    type: command
+    command: "{PYTHON_BIN} -c \"from pathlib import Path; c=Path('.github/workflows/ci.yml').read_text(encoding='utf-8'); req=['Run PRD1 acceptance gate selection','prd2-release-gate','Run PRD2 one-command gate']; missing=[r for r in req if r not in c]; raise SystemExit(1 if missing else 0)\""
+    timeout_s: 60
+  - id: P1-005
     title: Performance benchmark pipeline exists
     severity: p1
     type: file
     path: pipelines/bench_tsfm_runner_perf.py
-  - id: P1-005
+  - id: P1-006
     title: Live integration tests are runnable (may skip if env not configured)
     severity: p1
     type: command

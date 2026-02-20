@@ -140,6 +140,20 @@ PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 200 --unique
 - `scripts/prd2_verify_all.sh`/`scripts/prd2_release_audit.py` 기본 인터프리터를 `python3.11`로 고정하고, JSON 직렬화 경로까지 동일 인터프리터를 사용하도록 통일.
 - release audit 스크립트에 `--output-json` 옵션을 추가해 릴리스 증적(report artifact) 자동 수집을 지원.
 
+## PRD1+PRD2 calibration-risk gap closure
+- P2-07 오프라인 평가 파이프라인 완결:
+  - 구현: `pipelines/evaluate_tsfm_offline.py`
+  - 엔트리포인트: `python -m pipelines.evaluate_tsfm_offline` + `scripts/evaluate_tsfm_offline.py`
+- 평가 분할 고정:
+  - time validation (최신 구간)
+  - event holdout (seed 기반 deterministic 이벤트 홀드아웃)
+- 지표 산출 고정:
+  - interval/coverage: `coverage_80/90`, `mean_width_80/90`, `pinball_*`
+  - 운영 proxy: `breach_rate`, `breach_followthrough_rate`
+- 재현성 증거:
+  - 산출물 정렬 고정(`split`,`model`) + 동일 seed 재실행 동일 결과 테스트
+  - 테스트: `tests/integration/test_tsfm_event_holdout_eval.py`
+
 ## PRD1+PRD2 regression sweep
 - 실행 시각: 2026-02-21 05:22 (KST)
 - Python: `python3.11`

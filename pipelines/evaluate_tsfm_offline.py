@@ -170,7 +170,7 @@ def run(
             result_rows.append(row)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    detail_df = pd.DataFrame(result_rows)
+    detail_df = pd.DataFrame(result_rows).sort_values(["split", "model"]).reset_index(drop=True)
     detail_path = output_dir / "offline_eval_metrics.csv"
     detail_df.to_csv(detail_path, index=False)
 

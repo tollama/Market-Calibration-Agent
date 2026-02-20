@@ -51,7 +51,7 @@ Notes:
 | P2-04 | Baseline fallback policy on TSFM failure/insufficient quality | `runners/tsfm_service.py`, `runners/baselines.py`, `configs/tsfm_runtime.yaml` | `tests/unit/test_tsfm_runner_service.py`, `test_prd2_fixture_loader.py`, `tests/integration/test_prd2_fixture_scenarios.py` | **Implemented** |
 | P2-05 | Post-processing safety: quantile monotonicity, width sanity | `runners/tsfm_service.py` | `tests/unit/test_tsfm_runner_service.py` | **Implemented** |
 | P2-06 | Rolling conformal calibration integration | `calibration/conformal.py`, `calibration/conformal_state.py`, `pipelines/update_conformal_calibration.py`, `docs/conformal-ops.md` | `tests/unit/test_conformal_calibration.py`, `test_conformal_state.py` | **Implemented** |
-| P2-07 | Offline eval plan (time split + event-holdout + interval metrics) | `.openclaw-plans/PRD2_LOADTEST_SPEC.md`, `.openclaw-plans/PRD2_PERF_BLUEPRINT.md`, `pipelines/bench_tsfm_runner_perf.py` | `tests/unit/test_tsfm_perf_smoke.py` | **Partial** |
+| P2-07 | Offline eval plan (time split + event-holdout + interval metrics) | `pipelines/evaluate_tsfm_offline.py`, `scripts/evaluate_tsfm_offline.py`, `docs/ops/prd2-offline-eval.md` | `tests/unit/test_interval_metrics.py`, `tests/integration/test_tsfm_event_holdout_eval.py` | **Implemented** |
 | P2-08 | SLO/perf targets (p95 latency, cycle time) with reproducible checks | `pipelines/bench_tsfm_runner_perf.py`, `.github/workflows/prd2-perf-gate.yml`, `scripts/validate_prd2_perf_bench.py`, `docs/ops/prd2-perf-gate.md` | `tests/unit/test_tsfm_perf_smoke.py` | **Implemented** |
 | P2-09 | Observability metrics/logging and dashboards | `monitoring/grafana/prd2-observability-dashboard.json`, `monitoring/prometheus/tsfm_canary_alerts.rules.yaml`, `docs/ops/prd2-dashboards.md` | `scripts/evaluate_tsfm_canary_gate.py` (gate logic), no in-service metrics emitter test | **Partial** |
 | P2-10 | Model licensing guardrail (`commercial_ok` enforcement) | `configs/tsfm_models.yaml` | `tests/unit/test_tsfm_model_license_guard.py` | **Implemented** |
@@ -73,10 +73,7 @@ Notes:
    - Add inbound API auth and request rate-limiting at service layer or gateway contract.
    - Document enforcement point and add automated tests.
 
-4. **PRD2 offline evaluation completeness**
-   - Add explicit event-holdout evaluation pipeline/tests (not just perf smoke), and store reproducible artifacts.
-
-5. **Track PRD2 open questions as decision records**
+4. **Track PRD2 open questions as decision records**
    - Record final decisions for tollama contract evolution, default y-definition fallback priority, calibration window default, and top-N selection strategy.
 
 ---
@@ -85,8 +82,8 @@ Notes:
 
 Across PRD1 (20 rows) + PRD2 (12 rows) = **32 traceability rows**:
 
-- **Implemented:** 27
-- **Partial:** 5
+- **Implemented:** 29
+- **Partial:** 3
 - **Missing:** 0
 
 (Partial items are listed in section C for closure.)

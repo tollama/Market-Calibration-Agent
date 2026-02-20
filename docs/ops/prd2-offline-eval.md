@@ -39,6 +39,11 @@ Operational proxies:
 PYTHONPATH=. python -m pipelines.evaluate_tsfm_offline \
   --input data/derived/tsfm/offline_eval_input.parquet \
   --output-dir artifacts/prd2_offline_eval
+
+# equivalent wired entrypoint
+PYTHONPATH=. python scripts/evaluate_tsfm_offline.py \
+  --input data/derived/tsfm/offline_eval_input.parquet \
+  --output-dir artifacts/prd2_offline_eval
 ```
 
 Optional knobs:

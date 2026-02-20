@@ -71,3 +71,39 @@ def test_event_holdout_pipeline_generates_artifacts(tmp_path: Path) -> None:
     summary_json = json.loads((output_dir / "offline_eval_summary.json").read_text(encoding="utf-8"))
     assert summary_json["rows"] == 40
     assert summary_json["model_prefixes"] == ["baseline", "tsfm_raw", "tsfm_conformal"]
+
+
+def test_event_holdout_pipeline_outputs_are_reproducible(tmp_path: Path) -> None:
+    input_path = tmp_path / "offline_eval_input.csv"
+    _build_fixture(input_path)
+
+    output_a = tmp_path / "artifacts_a"
+    output_b = tmp_path / "artifacts_b"
+
+    kwargs = {
+        "input_path": input_path,
+        "model_prefixes": ["baseline", "tsfm_raw", "tsfm_conformal"],
+        "validation_ratio": 0.2,
+        "holdout_ratio": 0.25,
+        "seed": 7,
+        "move_threshold": 0.03,
+        "followthrough_hours": 6.0,
+    }
+
+    run(output_dir=output_a, **kwargs)
+    run(output_dir=output_b, **kwargs)
+
+    metrics_a = (output_a / "offline_eval_metrics.csv").read_text(encoding="utf-8")
+    metrics_b = (output_b / "offline_eval_metrics.csv").read_text(encoding="utf-8")
+    summary_a = json.loads((output_a / "offline_eval_summary.json").read_text(encoding="utf-8"))
+    summary_b = json.loads((output_b / "offline_eval_summary.json").read_text(encoding="utf-8"))
+
+    assert metrics_a == metrics_b
+    for key in (
+        "rows",
+        "time_validation_rows",
+        "event_holdout_rows",
+        "model_prefixes",
+        "splits",
+    ):
+        assert summary_a[key] == summary_b[key]

@@ -181,8 +181,8 @@ python3 scripts/evaluate_tsfm_canary_gate.py --input scripts/examples/canary_gat
 Expected: `gate_passed=false`, `rollback_triggered=true` with rollback reasons.
 
 ### Doc wiring updates
-- `README.md` now links canary runbook under Architecture/Notes.
-- `docs/prd2-implementation-status.md` now references monitoring rules, runbook, and evaluator script.
+- Ops index added: `docs/ops/README.md` links runbook/rules/evaluator assets.
+- Canary runbook references monitor rule file + evaluator usage for on-call handoff.
 
 ## Remaining risks / follow-up
 1. **tollama endpoint schema drift risk**: adapter isolates app contract but still requires updates if runtime schema changes.

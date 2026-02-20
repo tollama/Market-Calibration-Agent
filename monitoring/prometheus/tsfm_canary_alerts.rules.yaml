@@ -1,0 +1,128 @@
+groups:
+  - name: tsfm-canary-alerts
+    interval: 30s
+    rules:
+      - alert: TSFMCanaryP95LatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(tsfm_request_latency_ms_bucket[5m])) by (le, rollout_stage)) > 300
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "TSFM canary p95 latency over SLO"
+          description: "p95 latency has been >300ms for 10m at stage {{ $labels.rollout_stage }}"
+
+      - alert: TSFMCanaryErrorRateHigh
+        expr: |
+          (
+            sum(rate(tsfm_request_total{status="error"}[5m])) by (rollout_stage)
+            /
+            clamp_min(sum(rate(tsfm_request_total[5m])) by (rollout_stage), 1)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "TSFM canary error rate over envelope"
+          description: "error_rate >1% at stage {{ $labels.rollout_stage }}"
+
+      - alert: TSFMCanaryFallbackRateHigh5Pct
+        expr: |
+          (
+            sum(rate(tsfm_fallback_total[5m])) by (rollout_stage)
+            /
+            clamp_min(sum(rate(tsfm_request_total[5m])) by (rollout_stage), 1)
+          ) > 0.08 and on (rollout_stage) rollout_stage_info{rollout_stage="canary_5"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "TSFM fallback rate too high for 5% canary"
+          description: "fallback_rate >8% at canary_5"
+
+      - alert: TSFMCanaryFallbackRateHigh25Pct
+        expr: |
+          (
+            sum(rate(tsfm_fallback_total[5m])) by (rollout_stage)
+            /
+            clamp_min(sum(rate(tsfm_request_total[5m])) by (rollout_stage), 1)
+          ) > 0.10 and on (rollout_stage) rollout_stage_info{rollout_stage="canary_25"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "TSFM fallback rate too high for 25% canary"
+          description: "fallback_rate >10% at canary_25"
+
+      - alert: TSFMCanaryBreakerOpenRateHigh
+        expr: |
+          (
+            sum(rate(tsfm_breaker_open_total[5m])) by (rollout_stage)
+            /
+            clamp_min(sum(rate(tsfm_request_total[5m])) by (rollout_stage), 1)
+          ) > 0.30
+        for: 15m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "TSFM breaker-open rollback trigger"
+          description: "breaker_open_rate >30% for 15m (rollback condition)"
+
+      - alert: TSFMCanaryInvalidOutputDetected
+        expr: |
+          (
+            sum(rate(tsfm_invalid_output_total[5m])) by (rollout_stage)
+            /
+            clamp_min(sum(rate(tsfm_request_total[5m])) by (rollout_stage), 1)
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "TSFM invalid output detected"
+          description: "invalid_output_rate >0 (immediate rollback condition)"
+
+      - alert: TSFMCanaryRollbackP95Trigger
+        expr: histogram_quantile(0.95, sum(rate(tsfm_request_latency_ms_bucket[5m])) by (le, rollout_stage)) > 400
+        for: 10m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "TSFM rollback trigger: p95 latency"
+          description: "p95 >400ms for 2 consecutive 5m windows"
+
+      - alert: TSFMCanaryRollbackErrorRateTrigger
+        expr: |
+          (
+            sum(rate(tsfm_request_total{status="error"}[5m])) by (rollout_stage)
+            /
+            clamp_min(sum(rate(tsfm_request_total[5m])) by (rollout_stage), 1)
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "TSFM rollback trigger: error rate"
+          description: "error_rate >2% for any 5m window"
+
+      - alert: TSFMCanaryRollbackFallbackRateTrigger
+        expr: |
+          (
+            sum(rate(tsfm_fallback_total[5m])) by (rollout_stage)
+            /
+            clamp_min(sum(rate(tsfm_request_total[5m])) by (rollout_stage), 1)
+          ) > 0.20
+        for: 15m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "TSFM rollback trigger: fallback rate"
+          description: "fallback_rate >20% for 15m (outside incident drill)"

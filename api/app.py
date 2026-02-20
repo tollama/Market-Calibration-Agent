@@ -226,7 +226,7 @@ def get_postmortem(
 @app.post("/tsfm/forecast", response_model=TSFMForecastResponse)
 def post_tsfm_forecast(payload: TSFMForecastRequest, request: Request) -> TSFMForecastResponse:
     _tsfm_guard.enforce(request)
-    result = _tsfm_service.forecast(payload.model_dump())
+    result = _tsfm_service.forecast(payload.model_dump(mode="json"))
     return TSFMForecastResponse(**result)
 
 

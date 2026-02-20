@@ -67,6 +67,9 @@ class TSFMForecastRequest(BaseModel):
     horizon_steps: int = 12
     quantiles: List[float] = Field(default_factory=lambda: [0.1, 0.5, 0.9])
     y: List[float]
+    y_ts: Optional[List[datetime]] = None
+    observed_ts: Optional[datetime] = None
+    max_gap_minutes: Optional[int] = None
     x_past: Dict[str, List[float]] = Field(default_factory=dict)
     x_future: Dict[str, List[float]] = Field(default_factory=dict)
     transform: TSFMTransformConfig = Field(default_factory=TSFMTransformConfig)

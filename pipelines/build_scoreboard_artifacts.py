@@ -7,11 +7,15 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from calibration import metrics as calibration_metrics
 from calibration.metrics import segment_metrics, summarize_metrics
 from calibration.trust_score import compute_trust_components, compute_trust_score
 from storage.writers import ParquetWriter, normalize_dt
 
 _REQUIRED_ROW_KEYS = ("pred", "label", "market_id", "liquidity_bucket", "category")
+_TTE_BUCKET_KEY = "tte_bucket"
+_UNKNOWN_TTE_BUCKET = "unknown"
+_CATEGORY_LIQUIDITY_TTE_KEY = "category_liquidity_tte"
 _TRUST_COMPONENT_DEFAULTS: dict[str, float] = {
     "liquidity_depth": 0.5,
     "stability": 0.5,
@@ -22,6 +26,7 @@ _TRUST_COMPONENT_DEFAULTS: dict[str, float] = {
 
 def build_scoreboard_rows(
     rows: Sequence[Mapping[str, object]],
+    trust_weights: Mapping[str, object] | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     """Build per-market scoreboard rows plus global/segment summary metrics."""
     normalized_rows = _normalize_rows(rows)
@@ -29,9 +34,13 @@ def build_scoreboard_rows(
     labels = [row["label"] for row in normalized_rows]
 
     summary_metrics: dict[str, object] = {
-        "global": summarize_metrics(preds, labels),
+        "global": _summarize_global_metrics(preds, labels),
         "by_category": segment_metrics(normalized_rows, "category"),
         "by_liquidity_bucket": segment_metrics(normalized_rows, "liquidity_bucket"),
+        "by_category_liquidity_tte": segment_metrics(
+            _rows_with_category_liquidity_tte_key(normalized_rows),
+            _CATEGORY_LIQUIDITY_TTE_KEY,
+        ),
     }
 
     market_rows: dict[str, list[dict[str, object]]] = defaultdict(list)
@@ -55,7 +64,7 @@ def build_scoreboard_rows(
         market_metrics = summarize_metrics(market_preds, market_labels)
 
         averaged_components = _average_trust_components(grouped)
-        trust_score = compute_trust_score(averaged_components)
+        trust_score = compute_trust_score(averaged_components, weights=trust_weights)
 
         score_rows.append(
             {
@@ -76,6 +85,35 @@ def build_scoreboard_rows(
 
     score_rows.sort(key=lambda row: (-float(row["trust_score"]), str(row["market_id"])))
     return score_rows, summary_metrics
+
+
+def _summarize_global_metrics(
+    preds: Sequence[object],
+    labels: Sequence[object],
+) -> dict[str, float]:
+    summarize_metrics_extended = getattr(
+        calibration_metrics,
+        "summarize_metrics_extended",
+        None,
+    )
+    if callable(summarize_metrics_extended):
+        return summarize_metrics_extended(preds, labels)
+    return summarize_metrics(preds, labels)
+
+
+def _rows_with_category_liquidity_tte_key(
+    rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    segment_rows: list[dict[str, object]] = []
+    for row in rows:
+        copied = dict(row)
+        copied[_CATEGORY_LIQUIDITY_TTE_KEY] = (
+            copied["category"],
+            copied["liquidity_bucket"],
+            copied.get(_TTE_BUCKET_KEY, _UNKNOWN_TTE_BUCKET),
+        )
+        segment_rows.append(copied)
+    return segment_rows
 
 
 def render_scoreboard_markdown(
@@ -190,6 +228,8 @@ def _normalize_rows(rows: Sequence[Mapping[str, object]]) -> list[dict[str, obje
         for required_key in _REQUIRED_ROW_KEYS:
             if required_key not in copied:
                 raise ValueError(f"rows[{idx}] missing required key: {required_key}")
+        if _TTE_BUCKET_KEY not in copied:
+            copied[_TTE_BUCKET_KEY] = _UNKNOWN_TTE_BUCKET
         normalized_rows.append(copied)
     return normalized_rows
 

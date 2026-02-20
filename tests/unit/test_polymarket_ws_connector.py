@@ -237,3 +237,48 @@ def test_stream_messages_last_stats_increments(monkeypatch: pytest.MonkeyPatch) 
         "yielded": 2,
         "skipped_non_json": 2,
     }
+
+
+def test_build_market_subscribe_message_dedupes_ids_preserving_order() -> None:
+    message = PolymarketWSConnector.build_market_subscribe_message(
+        market_ids=["mkt-1", "mkt-2", "mkt-1", "mkt-3", "mkt-2"],
+        asset_ids=["asset-1", "asset-1", "asset-2", "asset-3", "asset-2"],
+    )
+
+    assert message == {
+        "type": "subscribe",
+        "channel": "market",
+        "market_ids": ["mkt-1", "mkt-2", "mkt-3"],
+        "asset_ids": ["asset-1", "asset-2", "asset-3"],
+    }
+
+
+def test_build_market_subscribe_message_supports_single_id_list() -> None:
+    market_only = PolymarketWSConnector.build_market_subscribe_message(
+        market_ids=["mkt-1", "mkt-1"],
+    )
+    asset_only = PolymarketWSConnector.build_market_subscribe_message(
+        asset_ids=["asset-1", "asset-1"],
+    )
+
+    assert market_only == {
+        "type": "subscribe",
+        "channel": "market",
+        "market_ids": ["mkt-1"],
+    }
+    assert asset_only == {
+        "type": "subscribe",
+        "channel": "market",
+        "asset_ids": ["asset-1"],
+    }
+
+
+def test_build_market_subscribe_message_raises_for_empty_id_lists() -> None:
+    with pytest.raises(ValueError, match="at least one non-empty ID list"):
+        PolymarketWSConnector.build_market_subscribe_message()
+
+    with pytest.raises(ValueError, match="at least one non-empty ID list"):
+        PolymarketWSConnector.build_market_subscribe_message(
+            market_ids=[],
+            asset_ids=[],
+        )

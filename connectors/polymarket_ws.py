@@ -105,6 +105,53 @@ class PolymarketWSConnector:
                 await asyncio.sleep(delay)
 
     @staticmethod
+    def build_market_subscribe_message(
+        *,
+        market_ids: list[str] | None = None,
+        asset_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        deduped_market_ids = PolymarketWSConnector._dedupe_ids(
+            market_ids,
+            field_name="market_ids",
+        )
+        deduped_asset_ids = PolymarketWSConnector._dedupe_ids(
+            asset_ids,
+            field_name="asset_ids",
+        )
+        if not deduped_market_ids and not deduped_asset_ids:
+            raise ValueError(
+                "at least one non-empty ID list is required for market_ids or asset_ids."
+            )
+
+        message: dict[str, Any] = {
+            "type": "subscribe",
+            "channel": "market",
+        }
+        if deduped_market_ids:
+            message["market_ids"] = deduped_market_ids
+        if deduped_asset_ids:
+            message["asset_ids"] = deduped_asset_ids
+        return message
+
+    @staticmethod
+    def _dedupe_ids(values: list[str] | None, *, field_name: str) -> list[str]:
+        if values is None:
+            return []
+        if not isinstance(values, list):
+            raise TypeError(f"{field_name} must be a list[str] or None.")
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not isinstance(value, str):
+                raise TypeError(f"{field_name} must contain only string IDs.")
+            if value in seen:
+                continue
+            seen.add(value)
+            deduped.append(value)
+        return deduped
+
+    @staticmethod
     def _resolve_subscribe_messages(
         *,
         subscribe_message: Any,

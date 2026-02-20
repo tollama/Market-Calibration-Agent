@@ -72,8 +72,8 @@ def test_ingest_gamma_raw_fetches_writes_and_dedupes(tmp_path: Path) -> None:
         )
     )
 
-    markets_path = tmp_path / "raw" / "gamma_markets" / "dt=2026-02-20" / "data.jsonl"
-    events_path = tmp_path / "raw" / "gamma_events" / "dt=2026-02-20" / "data.jsonl"
+    markets_path = tmp_path / "raw" / "gamma" / "markets" / "dt=2026-02-20" / "data.jsonl"
+    events_path = tmp_path / "raw" / "gamma" / "events" / "dt=2026-02-20" / "data.jsonl"
 
     assert connector.market_calls == [{"limit": 10, "params": {"active": True}}]
     assert connector.event_calls == [{"limit": 20, "params": {"closed": False}}]
@@ -83,6 +83,8 @@ def test_ingest_gamma_raw_fetches_writes_and_dedupes(tmp_path: Path) -> None:
     assert summary["output_paths"] == {
         "gamma_markets": str(markets_path),
         "gamma_events": str(events_path),
+        "gamma/markets": str(markets_path),
+        "gamma/events": str(events_path),
     }
 
     assert _read_jsonl(markets_path) == [
@@ -107,8 +109,8 @@ def test_run_ingest_gamma_raw_uses_defaults(tmp_path: Path) -> None:
         dt="2026-02-21",
     )
 
-    markets_path = tmp_path / "raw" / "gamma_markets" / "dt=2026-02-21" / "data.jsonl"
-    events_path = tmp_path / "raw" / "gamma_events" / "dt=2026-02-21" / "data.jsonl"
+    markets_path = tmp_path / "raw" / "gamma" / "markets" / "dt=2026-02-21" / "data.jsonl"
+    events_path = tmp_path / "raw" / "gamma" / "events" / "dt=2026-02-21" / "data.jsonl"
 
     assert connector.market_calls == [{"limit": 500, "params": None}]
     assert connector.event_calls == [{"limit": 500, "params": None}]
@@ -117,6 +119,8 @@ def test_run_ingest_gamma_raw_uses_defaults(tmp_path: Path) -> None:
     assert summary["output_paths"] == {
         "gamma_markets": str(markets_path),
         "gamma_events": str(events_path),
+        "gamma/markets": str(markets_path),
+        "gamma/events": str(events_path),
     }
     assert markets_path.exists()
     assert events_path.exists()

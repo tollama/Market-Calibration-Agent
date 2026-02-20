@@ -542,9 +542,12 @@ def _run_daily_stages(
     checkpoint_path: str | None,
     resume_from_checkpoint: bool,
     backfill_days: int,
+    stage_retry_limit: int,
+    continue_on_stage_failure: bool,
 ) -> PipelineResult:
     checkpoint_stages = _checkpoint_stage_lookup(checkpoint_path, resume_from_checkpoint)
     stage_results: list[StageResult] = []
+    retry_limit = max(0, stage_retry_limit)
 
     for stage in build_daily_stages():
         checkpoint_stage = checkpoint_stages.get(stage.name)
@@ -563,27 +566,39 @@ def _run_daily_stages(
             )
             continue
 
-        try:
-            output = stage.handler(context)
-            stage_result = StageResult(name=stage.name, status="success", output=output)
-        except Exception as exc:  # pragma: no cover - defensive skeleton behavior
+        stage_result: StageResult | None = None
+        for attempt in range(retry_limit + 1):
+            try:
+                output = stage.handler(context)
+                if attempt > 0:
+                    if isinstance(output, Mapping):
+                        output = dict(output)
+                    else:
+                        output = {}
+                    output["retry_count"] = attempt
+                stage_result = StageResult(name=stage.name, status="success", output=output)
+                break
+            except Exception as exc:  # pragma: no cover - defensive skeleton behavior
+                if attempt < retry_limit:
+                    continue
+                failed_output: dict[str, Any] = {}
+                if attempt > 0:
+                    failed_output["retry_count"] = attempt
+                stage_result = StageResult(
+                    name=stage.name,
+                    status="failed",
+                    output=failed_output,
+                    error=str(exc),
+                )
+                break
+
+        if stage_result is None:  # pragma: no cover - defensive guard
             stage_result = StageResult(
                 name=stage.name,
                 status="failed",
                 output={},
-                error=str(exc),
+                error="stage execution did not produce a result",
             )
-            stage_results.append(stage_result)
-            if checkpoint_path is not None:
-                save_checkpoint(
-                    checkpoint_path,
-                    _checkpoint_stage_payload(
-                        context=context,
-                        stage_results=stage_results,
-                        backfill_days=backfill_days,
-                    ),
-                )
-            break
 
         stage_results.append(stage_result)
         if checkpoint_path is not None:
@@ -595,6 +610,8 @@ def _run_daily_stages(
                     backfill_days=backfill_days,
                 ),
             )
+        if stage_result.status == "failed" and not continue_on_stage_failure:
+            break
 
     return PipelineResult(
         run_id=context.run_id,
@@ -612,6 +629,8 @@ def run_daily_job(
     checkpoint_path: str | None = None,
     resume_from_checkpoint: bool = False,
     backfill_days: int = 0,
+    stage_retry_limit: int = 0,
+    continue_on_stage_failure: bool = False,
 ) -> dict[str, Any]:
     """Execute the minimal daily orchestrator skeleton."""
 
@@ -628,6 +647,8 @@ def run_daily_job(
         checkpoint_path=checkpoint_path,
         resume_from_checkpoint=resume_from_checkpoint,
         backfill_days=backfill_days,
+        stage_retry_limit=stage_retry_limit,
+        continue_on_stage_failure=continue_on_stage_failure,
     )
     payload = {
         "run_id": result.run_id,

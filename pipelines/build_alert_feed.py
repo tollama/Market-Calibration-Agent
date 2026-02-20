@@ -19,9 +19,13 @@ def build_alert_feed_rows(
     *,
     thresholds: AlertThresholdConfig | None = None,
     include_fyi: bool = False,
+    min_trust_score: float | None = None,
 ) -> list[dict[str, object]]:
     """Build alert feed rows, excluding FYI alerts unless include_fyi=True."""
     alert_rows: list[dict[str, object]] = []
+    normalized_min_trust_score = (
+        float(min_trust_score) if min_trust_score is not None else None
+    )
 
     for idx, row in enumerate(rows):
         if not isinstance(row, Mapping):
@@ -36,6 +40,14 @@ def build_alert_feed_rows(
         open_interest_change_1h = _optional_float(row.get("open_interest_change_1h"))
         ambiguity_score = _optional_float(row.get("ambiguity_score"))
         volume_velocity = _optional_float(row.get("volume_velocity"))
+        trust_score = _optional_float(row.get("trust_score"))
+
+        if (
+            normalized_min_trust_score is not None
+            and trust_score is not None
+            and trust_score < normalized_min_trust_score
+        ):
+            continue
 
         evaluation = evaluate_alert(
             p_yes=p_yes,

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from reports.postmortem import build_postmortem_markdown, write_postmortem_markdown
 
 
@@ -81,11 +83,58 @@ def test_write_postmortem_markdown_writes_file_and_returns_path(tmp_path: Path) 
         "title": "Postmortem mkt-90",
         "incident_summary": "Summary text.",
         "timeline": ["2026-02-20T10:00:00Z alert fired"],
+        "resolved_date": "2026-02-20",
     }
 
     path = write_postmortem_markdown(event, root=tmp_path, market_id="mkt-90")
-    expected_path = tmp_path / "derived" / "reports" / "postmortem" / "mkt-90.md"
+    expected_path = (
+        tmp_path / "derived" / "reports" / "postmortem" / "mkt-90_2026-02-20.md"
+    )
 
     assert path == str(expected_path)
     assert expected_path.exists()
     assert expected_path.read_text(encoding="utf-8") == build_postmortem_markdown(event)
+
+
+@pytest.mark.parametrize(
+    ("event", "expected_filename"),
+    [
+        (
+            {
+                "resolved_date": "2026-02-21",
+                "resolved_at": "2026-02-20T12:00:00Z",
+                "date": "2026-02-19",
+            },
+            "mkt-1_2026-02-21.md",
+        ),
+        (
+            {
+                "resolved_at": "2026-02-20T12:00:00Z",
+                "date": "2026-02-19",
+            },
+            "mkt-1_2026-02-20.md",
+        ),
+        (
+            {
+                "resolved_at": {"date": "2026-02-18"},
+                "date": "2026-02-19",
+            },
+            "mkt-1_2026-02-18.md",
+        ),
+        (
+            {
+                "date": "2026-02-19",
+            },
+            "mkt-1_2026-02-19.md",
+        ),
+        ({}, "mkt-1_unknown-date.md"),
+    ],
+)
+def test_write_postmortem_markdown_resolved_date_priority(
+    tmp_path: Path, event: dict, expected_filename: str
+) -> None:
+    path = write_postmortem_markdown(event, root=tmp_path, market_id="mkt-1")
+
+    expected_path = tmp_path / "derived" / "reports" / "postmortem" / expected_filename
+    assert path == str(expected_path)
+    assert expected_path.exists()

@@ -55,13 +55,13 @@ async def ingest_gamma_raw(
 
     markets_path = raw_writer.write(
         markets,
-        dataset="gamma_markets",
+        dataset="gamma/markets",
         dt=dt,
         dedupe_key="record_id",
     )
     events_path = raw_writer.write(
         events,
-        dataset="gamma_events",
+        dataset="gamma/events",
         dt=dt,
         dedupe_key="record_id",
     )
@@ -72,6 +72,8 @@ async def ingest_gamma_raw(
         "output_paths": {
             "gamma_markets": str(markets_path),
             "gamma_events": str(events_path),
+            "gamma/markets": str(markets_path),
+            "gamma/events": str(events_path),
         },
     }
 

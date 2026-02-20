@@ -33,6 +33,25 @@ def _status_from_row(row: object, *, status_key: str) -> str | None:
     return _normalize_status(row.get(status_key))
 
 
+def _is_multi_outcome_row(row: Mapping[object, object]) -> bool:
+    if row.get("is_multi_outcome") is True:
+        return True
+
+    outcome_count = row.get("outcome_count")
+    if (
+        isinstance(outcome_count, (int, float))
+        and not isinstance(outcome_count, bool)
+        and outcome_count > 2
+    ):
+        return True
+
+    outcomes = row.get("outcomes")
+    if isinstance(outcomes, Sequence) and not isinstance(outcomes, (str, bytes, bytearray)):
+        return len(outcomes) > 2
+
+    return False
+
+
 def split_by_label_status(rows: Sequence[object]) -> dict[str, list[object]]:
     grouped: dict[str, list[object]] = {
         "resolved_true": [],
@@ -58,12 +77,15 @@ def to_binary_label_rows(
     rows: Sequence[object],
     *,
     status_key: str = _DEFAULT_STATUS_KEY,
+    include_multi_outcome: bool = False,
 ) -> list[dict[str, Any]]:
     resolved_key = _effective_status_key(status_key)
     converted: list[dict[str, Any]] = []
 
     for row in rows:
         if not isinstance(row, Mapping):
+            continue
+        if not include_multi_outcome and _is_multi_outcome_row(row):
             continue
 
         status = _status_from_row(row, status_key=resolved_key)

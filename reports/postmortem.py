@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -30,6 +31,52 @@ def _first_present(event: Mapping[str, Any], *keys: str) -> Any:
         if not _is_missing(candidate):
             return candidate
     return None
+
+
+def _coerce_iso_date(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+
+        if len(text) >= 10:
+            try:
+                return date.fromisoformat(text[:10]).isoformat()
+            except ValueError:
+                pass
+
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.date().isoformat()
+    return None
+
+
+def _extract_resolved_date(event: Mapping[str, Any]) -> str:
+    resolved_date = _coerce_iso_date(event.get("resolved_date"))
+    if resolved_date is not None:
+        return resolved_date
+
+    resolved_at = event.get("resolved_at")
+    if isinstance(resolved_at, Mapping):
+        resolved_date = _coerce_iso_date(resolved_at.get("date"))
+        if resolved_date is not None:
+            return resolved_date
+
+    resolved_date = _coerce_iso_date(resolved_at)
+    if resolved_date is not None:
+        return resolved_date
+
+    resolved_date = _coerce_iso_date(event.get("date"))
+    if resolved_date is not None:
+        return resolved_date
+
+    return "unknown-date"
 
 
 def _normalize_for_json(value: Any) -> Any:
@@ -135,7 +182,15 @@ def build_postmortem_markdown(event: dict) -> str:
 
 
 def write_postmortem_markdown(event: dict, *, root: str | Path, market_id: str) -> str:
-    output_path = Path(root) / "derived" / "reports" / "postmortem" / f"{market_id}.md"
+    payload = event if isinstance(event, Mapping) else {}
+    resolved_date = _extract_resolved_date(payload)
+    output_path = (
+        Path(root)
+        / "derived"
+        / "reports"
+        / "postmortem"
+        / f"{market_id}_{resolved_date}.md"
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(build_postmortem_markdown(event), encoding="utf-8")
     return str(output_path)

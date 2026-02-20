@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol, TypeVar
 
 from .cache import LLMCache
-from .policy import DEFAULT_SEED, DEFAULT_TEMPERATURE, resolve_sampling_policy
+from .policy import DEFAULT_SEED, DEFAULT_TEMPERATURE, DEFAULT_TOP_P, resolve_sampling_policy
 from .schemas import from_dict_strict, parse_json_as
 
 T = TypeVar("T")
@@ -43,14 +43,14 @@ class LLMBackend(Protocol):
         """Generate a raw text completion."""
 
 
-def _backend_accepts_seed(complete_fn: Any) -> bool:
-    """Return True when a completion callable can receive a seed kwarg."""
+def _backend_accepts_kwarg(complete_fn: Any, kwarg_name: str) -> bool:
+    """Return True when a completion callable can receive a specific kwarg."""
     try:
         parameters = inspect.signature(complete_fn).parameters.values()
     except (TypeError, ValueError):
         return False
     for parameter in parameters:
-        if parameter.name == "seed":
+        if parameter.name == kwarg_name:
             return True
         if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             return True
@@ -67,7 +67,8 @@ class LLMClient:
         cache_backend: CacheBackend | None = None,
     ) -> None:
         self._backend = backend
-        self._backend_accepts_seed = _backend_accepts_seed(backend.complete)
+        self._backend_accepts_seed = _backend_accepts_kwarg(backend.complete, "seed")
+        self._backend_accepts_top_p = _backend_accepts_kwarg(backend.complete, "top_p")
         resolved_cache = cache_backend if cache_backend is not None else cache
         self._cache: CacheBackend = resolved_cache if resolved_cache is not None else LLMCache()
 
@@ -84,18 +85,24 @@ class LLMClient:
         schema: type[T],
         system_prompt: str | None = None,
         temperature: float = DEFAULT_TEMPERATURE,
+        top_p: float = DEFAULT_TOP_P,
         seed: int | None = DEFAULT_SEED,
         max_tokens: int | None = None,
         cache_context: dict[str, Any] | None = None,
     ) -> T:
         """Generate and parse strict JSON output into a schema object."""
-        sampling_policy = resolve_sampling_policy(temperature=temperature, seed=seed)
+        sampling_policy = resolve_sampling_policy(
+            temperature=temperature,
+            top_p=top_p,
+            seed=seed,
+        )
         cache_key = self._cache.key_for(
             model=model,
             prompt_name=prompt_name,
             system_prompt=system_prompt or "",
             user_prompt=user_prompt,
             temperature=sampling_policy.temperature,
+            top_p=sampling_policy.top_p,
             seed=sampling_policy.seed,
             max_tokens=max_tokens,
             schema=schema.__name__,
@@ -116,6 +123,8 @@ class LLMClient:
             "temperature": sampling_policy.temperature,
             "max_tokens": max_tokens,
         }
+        if self._backend_accepts_top_p:
+            complete_kwargs["top_p"] = sampling_policy.top_p
         if self._backend_accepts_seed:
             complete_kwargs["seed"] = sampling_policy.seed
 

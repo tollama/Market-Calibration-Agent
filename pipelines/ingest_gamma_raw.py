@@ -25,6 +25,24 @@ class _GammaConnector(Protocol):
         ...
 
 
+class _GammaConnectorRaw(Protocol):
+    async def fetch_markets_raw(
+        self,
+        *,
+        limit: int = 500,
+        params: Mapping[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    async def fetch_events_raw(
+        self,
+        *,
+        limit: int = 500,
+        params: Mapping[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        ...
+
+
 class _RawWriter(Protocol):
     def write(
         self,
@@ -36,6 +54,10 @@ class _RawWriter(Protocol):
         dedupe_key: str | None = None,
     ) -> Path:
         ...
+
+
+def _clone_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [dict(row) for row in rows]
 
 
 async def ingest_gamma_raw(
@@ -52,6 +74,36 @@ async def ingest_gamma_raw(
         connector.fetch_markets(limit=market_limit, params=market_params),
         connector.fetch_events(limit=event_limit, params=event_params),
     )
+    markets = _clone_rows(markets)
+    events = _clone_rows(events)
+
+    markets_original = _clone_rows(markets)
+    events_original = _clone_rows(events)
+
+    raw_fetches: list[tuple[str, Any]] = []
+    fetch_markets_raw = getattr(connector, "fetch_markets_raw", None)
+    fetch_events_raw = getattr(connector, "fetch_events_raw", None)
+    if callable(fetch_markets_raw):
+        raw_fetches.append(
+            (
+                "markets",
+                fetch_markets_raw(limit=market_limit, params=market_params),
+            )
+        )
+    if callable(fetch_events_raw):
+        raw_fetches.append(
+            (
+                "events",
+                fetch_events_raw(limit=event_limit, params=event_params),
+            )
+        )
+    if raw_fetches:
+        raw_results = await asyncio.gather(*(fetch_call for _, fetch_call in raw_fetches))
+        for (dataset_kind, _), raw_rows in zip(raw_fetches, raw_results):
+            if dataset_kind == "markets":
+                markets_original = _clone_rows(raw_rows)
+                continue
+            events_original = _clone_rows(raw_rows)
 
     markets_path = raw_writer.write(
         markets,
@@ -65,15 +117,35 @@ async def ingest_gamma_raw(
         dt=dt,
         dedupe_key="record_id",
     )
+    markets_original_path = raw_writer.write(
+        markets_original,
+        dataset="gamma/markets_original",
+        dt=dt,
+    )
+    events_original_path = raw_writer.write(
+        events_original,
+        dataset="gamma/events_original",
+        dt=dt,
+    )
 
     return {
         "market_count": len(markets),
         "event_count": len(events),
+        "dataset_counts": {
+            "gamma/markets": len(markets),
+            "gamma/events": len(events),
+            "gamma/markets_original": len(markets_original),
+            "gamma/events_original": len(events_original),
+        },
         "output_paths": {
             "gamma_markets": str(markets_path),
             "gamma_events": str(events_path),
+            "gamma_markets_original": str(markets_original_path),
+            "gamma_events_original": str(events_original_path),
             "gamma/markets": str(markets_path),
             "gamma/events": str(events_path),
+            "gamma/markets_original": str(markets_original_path),
+            "gamma/events_original": str(events_original_path),
         },
     }
 

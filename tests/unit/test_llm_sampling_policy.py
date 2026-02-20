@@ -5,7 +5,7 @@ from typing import Any
 
 from llm.cache import make_cache_key
 from llm.client import LLMClient
-from llm.policy import DEFAULT_SEED, DEFAULT_TEMPERATURE
+from llm.policy import DEFAULT_SEED, DEFAULT_TEMPERATURE, DEFAULT_TOP_P
 
 
 @dataclass(frozen=True)
@@ -121,10 +121,12 @@ def test_generate_json_cache_key_includes_deterministic_sampling_metadata() -> N
     assert len(cache.key_inputs) == 2
     assert cache.keys[0] == cache.keys[1]
     assert cache.key_inputs[0]["temperature"] == DEFAULT_TEMPERATURE
+    assert cache.key_inputs[0]["top_p"] == DEFAULT_TOP_P
     assert cache.key_inputs[0]["seed"] == DEFAULT_SEED
     assert cache.key_inputs[0]["sampling_policy"] == {
         "seed": DEFAULT_SEED,
         "temperature": DEFAULT_TEMPERATURE,
+        "top_p": DEFAULT_TOP_P,
     }
 
 

@@ -179,6 +179,47 @@ except ModuleNotFoundError as exc:
     build_alert_feed_rows = _fallback_build_alert_feed_rows
 
 
+def _fallback_load_trust_weights(config_path: str | None = None) -> Mapping[str, object] | None:
+    _ = config_path
+    return None
+
+
+try:
+    from .trust_policy_loader import load_trust_weights
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.trust_policy_loader", "trust_policy_loader"}:
+        raise
+    load_trust_weights = _fallback_load_trust_weights
+
+
+def _fallback_load_alert_thresholds(config_path: str | None = None) -> Any:
+    _ = config_path
+    return None
+
+
+def _fallback_load_alert_min_trust_score(config_path: str | None = None) -> float | None:
+    _ = config_path
+    return None
+
+
+try:
+    from .alert_policy_loader import load_alert_min_trust_score, load_alert_thresholds
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.alert_policy_loader", "alert_policy_loader"}:
+        raise
+    load_alert_thresholds = _fallback_load_alert_thresholds
+    load_alert_min_trust_score = _fallback_load_alert_min_trust_score
+
+
+def _load_policy_with_optional_path(loader: Any, config_path: str | None) -> Any:
+    if not callable(loader):
+        return None
+    try:
+        return loader(config_path)
+    except TypeError:
+        return loader()
+
+
 def _fallback_build_and_write_postmortems(
     events: list[dict[str, Any]],
     *,
@@ -364,6 +405,8 @@ def _stage_features(context: PipelineRunContext) -> dict[str, Any]:
 
 
 def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
+    context.state.setdefault("trust_policy_loaded", False)
+    context.state.setdefault("alert_policy_loaded", False)
     hook = _resolve_stage_hook(context, "metric_fn")
     if hook is None:
         metric_source_rows = _rows_to_dicts(context.state.get("metric_rows"))
@@ -377,11 +420,57 @@ def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
                     context.state["feature_rows"] = feature_rows
             metric_source_rows = _rows_to_dicts(feature_rows)
 
+        trust_config_path_raw = context.state.get("trust_config_path")
+        trust_config_path = (
+            str(trust_config_path_raw) if trust_config_path_raw is not None else None
+        )
+        trust_weights: Any = None
+        trust_policy_loaded = False
+        try:
+            trust_weights = _load_policy_with_optional_path(load_trust_weights, trust_config_path)
+            trust_policy_loaded = trust_weights is not None
+        except Exception:  # pragma: no cover - optional integration fallback
+            trust_weights = None
+            trust_policy_loaded = False
+        context.state["trust_policy_loaded"] = trust_policy_loaded
+
+        alert_config_path_raw = context.state.get("alert_config_path")
+        alert_config_path = (
+            str(alert_config_path_raw) if alert_config_path_raw is not None else None
+        )
+        thresholds: Any = None
+        min_trust_score: float | None = None
+        try:
+            thresholds = _load_policy_with_optional_path(
+                load_alert_thresholds,
+                alert_config_path,
+            )
+        except Exception:  # pragma: no cover - optional integration fallback
+            thresholds = None
+        try:
+            min_trust_score = _load_policy_with_optional_path(
+                load_alert_min_trust_score,
+                alert_config_path,
+            )
+        except Exception:  # pragma: no cover - optional integration fallback
+            min_trust_score = None
+        context.state["alert_policy_loaded"] = (
+            thresholds is not None or min_trust_score is not None
+        )
+
         scoreboard_rows: list[dict[str, Any]] = []
         summary_metrics: dict[str, Any] = {}
         if metric_source_rows:
             try:
-                raw_scoreboard_rows, raw_summary_metrics = build_scoreboard_rows(metric_source_rows)
+                try:
+                    raw_scoreboard_rows, raw_summary_metrics = build_scoreboard_rows(
+                        metric_source_rows,
+                        trust_weights=trust_weights,
+                    )
+                except TypeError:
+                    raw_scoreboard_rows, raw_summary_metrics = build_scoreboard_rows(
+                        metric_source_rows
+                    )
                 scoreboard_rows = _rows_to_dicts(raw_scoreboard_rows)
                 if isinstance(raw_summary_metrics, Mapping):
                     summary_metrics = dict(raw_summary_metrics)
@@ -394,7 +483,15 @@ def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
         alert_feed_rows: list[dict[str, Any]] = []
         if metric_source_rows:
             try:
-                alert_feed_rows = _rows_to_dicts(build_alert_feed_rows(metric_source_rows))
+                try:
+                    raw_alert_feed_rows = build_alert_feed_rows(
+                        metric_source_rows,
+                        thresholds=thresholds,
+                        min_trust_score=min_trust_score,
+                    )
+                except TypeError:
+                    raw_alert_feed_rows = build_alert_feed_rows(metric_source_rows)
+                alert_feed_rows = _rows_to_dicts(raw_alert_feed_rows)
             except Exception:  # pragma: no cover - optional integration fallback
                 alert_feed_rows = []
         context.state["alert_feed_rows"] = alert_feed_rows
@@ -413,6 +510,8 @@ def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
     output.setdefault("metric_count", _count_items(context.state.get("metrics")))
     output.setdefault("scoreboard_count", _count_items(context.state.get("scoreboard_rows")))
     output.setdefault("alert_count", _count_items(context.state.get("alert_feed_rows")))
+    output.setdefault("trust_policy_loaded", bool(context.state.get("trust_policy_loaded")))
+    output.setdefault("alert_policy_loaded", bool(context.state.get("alert_policy_loaded")))
     return output
 
 
@@ -631,6 +730,8 @@ def run_daily_job(
     backfill_days: int = 0,
     stage_retry_limit: int = 0,
     continue_on_stage_failure: bool = False,
+    trust_config_path: str | None = None,
+    alert_config_path: str | None = None,
 ) -> dict[str, Any]:
     """Execute the minimal daily orchestrator skeleton."""
 
@@ -639,6 +740,8 @@ def run_daily_job(
         data_interval_start=data_interval_start,
         data_interval_end=data_interval_end,
     )
+    context.state["trust_config_path"] = trust_config_path
+    context.state["alert_config_path"] = alert_config_path
     if backfill_days > 0:
         context.state["backfill_days"] = backfill_days
 

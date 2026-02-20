@@ -1,5 +1,6 @@
 """Five-line explanation agent."""
 
+from agents.explain_validator import validate_evidence_bound
 from llm.client import LLMClient, load_prompt
 from llm.schemas import ExplainFiveLinesResult
 
@@ -15,6 +16,7 @@ _EVIDENCE_GUARDRAIL = (
 )
 _MAX_LINE_LENGTH = 140
 _DISCLAIMER_TEXT = "투자 조언 아님"
+_INSUFFICIENT_EVIDENCE_TAG = "(근거 불충분)"
 
 
 class ExplainAgent:
@@ -40,13 +42,28 @@ class ExplainAgent:
             schema=ExplainFiveLinesResult,
             temperature=DEFAULT_TEMPERATURE,
         )
-        return self._apply_output_policy(generated)
+        return self._apply_output_policy(generated, source_text=input_text)
 
-    def _apply_output_policy(self, result: ExplainFiveLinesResult) -> ExplainFiveLinesResult:
-        lines = [self._truncate_line(line.strip()) for line in result.lines]
+    def _apply_output_policy(self, result: ExplainFiveLinesResult, source_text: str) -> ExplainFiveLinesResult:
+        lines = [line.strip() for line in result.lines]
+
+        validation = validate_evidence_bound(lines=lines, source_text=source_text)
+        for line_no in validation["violation_lines"]:
+            line_idx = line_no - 1
+            if line_idx < 0 or line_idx >= len(lines):
+                continue
+            lines[line_idx] = self._mark_insufficient_evidence(lines[line_idx])
+
+        lines = [self._truncate_line(line) for line in lines]
         if self._include_disclaimer:
             lines[-1] = self._truncate_line(_DISCLAIMER_TEXT)
         return ExplainFiveLinesResult(lines=lines)
+
+    @staticmethod
+    def _mark_insufficient_evidence(line: str) -> str:
+        if _INSUFFICIENT_EVIDENCE_TAG in line:
+            return line
+        return f"{line} {_INSUFFICIENT_EVIDENCE_TAG}".strip()
 
     @staticmethod
     def _truncate_line(line: str) -> str:

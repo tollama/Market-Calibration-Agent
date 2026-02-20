@@ -13,3 +13,10 @@ calibration:
   update_interval_seconds: 3600
   min_volume: 500.0
   confidence_threshold: 0.70
+
+trust_score:
+  weights:
+    liquidity_depth: 0.35
+    stability: 0.25
+    question_quality: 0.25
+    manipulation_suspect: 0.15

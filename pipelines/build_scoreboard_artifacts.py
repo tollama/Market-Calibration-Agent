@@ -7,12 +7,14 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from calibration.labeling import to_binary_label_rows
 from calibration import metrics as calibration_metrics
 from calibration.metrics import segment_metrics, summarize_metrics
 from calibration.trust_score import compute_trust_components, compute_trust_score
 from storage.writers import ParquetWriter, normalize_dt
 
 _REQUIRED_ROW_KEYS = ("pred", "label", "market_id", "liquidity_bucket", "category")
+_LABEL_STATUS_KEY = "label_status"
 _TTE_BUCKET_KEY = "tte_bucket"
 _UNKNOWN_TTE_BUCKET = "unknown"
 _CATEGORY_LIQUIDITY_TTE_KEY = "category_liquidity_tte"
@@ -225,13 +227,32 @@ def _normalize_rows(rows: Sequence[Mapping[str, object]]) -> list[dict[str, obje
         if not isinstance(row, Mapping):
             raise ValueError(f"rows[{idx}] must be a mapping")
         copied = dict(row)
-        for required_key in _REQUIRED_ROW_KEYS:
-            if required_key not in copied:
-                raise ValueError(f"rows[{idx}] missing required key: {required_key}")
+
+        if "label" in copied:
+            _validate_required_row_keys(copied, idx=idx)
+        elif _LABEL_STATUS_KEY in copied:
+            converted = to_binary_label_rows([copied])
+            if not converted:
+                continue
+            copied = dict(converted[0])
+            copied["label"] = copied["y"]
+            _validate_required_row_keys(copied, idx=idx)
+        else:
+            raise ValueError(f"rows[{idx}] missing required key: label")
+
         if _TTE_BUCKET_KEY not in copied:
             copied[_TTE_BUCKET_KEY] = _UNKNOWN_TTE_BUCKET
         normalized_rows.append(copied)
+
+    if not normalized_rows:
+        raise ValueError("no binary labeled rows")
     return normalized_rows
+
+
+def _validate_required_row_keys(row: Mapping[str, object], *, idx: int) -> None:
+    for required_key in _REQUIRED_ROW_KEYS:
+        if required_key not in row:
+            raise ValueError(f"rows[{idx}] missing required key: {required_key}")
 
 
 def _average_trust_components(rows: Sequence[Mapping[str, object]]) -> dict[str, float]:

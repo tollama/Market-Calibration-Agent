@@ -6,6 +6,11 @@ thresholds:
   mispricing_bps: 100
   max_drawdown_pct: 10.0
   min_liquidity_usd: 5000
+  low_oi_confirmation: -0.15
+  low_ambiguity: 0.35
+  volume_spike: 2.0
+
+min_trust_score: 60.0
 
 channels:
   log:

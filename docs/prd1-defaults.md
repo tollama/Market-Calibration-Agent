@@ -1,7 +1,7 @@
 # PRD1 MVP-1 Default Values
 
 This document records default-value choices for PRD1 MVP-1 (batch/read-only) and the rationale for each choice.  
-YAML schema shape is unchanged; only values were adjusted.
+Config compatibility is preserved; PRD1-specific defaults are additive where new keys are required.
 
 ## Calibration windows
 
@@ -17,6 +17,17 @@ YAML schema shape is unchanged; only values were adjusted.
 - `calibration.min_volume: 500.0`
   - Rationale: Increase minimum market activity required for calibration inputs so sparse/noisy markets are less likely to influence confidence decisions.
 
+## Trust score weights
+
+- `trust_score.weights.liquidity_depth: 0.35`
+  - Rationale: Keep liquidity depth as the strongest contributor so thin markets are less likely to receive high trust.
+- `trust_score.weights.stability: 0.25`
+  - Rationale: Preserve stability as a major quality signal while balancing against liquidity and question quality.
+- `trust_score.weights.question_quality: 0.25`
+  - Rationale: Give prompt/market-structure quality equal weight with stability for PRD1 trust gating.
+- `trust_score.weights.manipulation_suspect: 0.15`
+  - Rationale: Retain a meaningful but smaller penalty channel so manipulation risk lowers trust without dominating every regime.
+
 ## Alert cooldown/thresholds
 
 - `alerts.cooldown_seconds: 900`
@@ -27,6 +38,14 @@ YAML schema shape is unchanged; only values were adjusted.
   - Rationale: A 10% drawdown threshold is conservative enough for meaningful stress detection while avoiding frequent churn alerts.
 - `thresholds.min_liquidity_usd: 5000`
   - Rationale: Raise liquidity floor so alerts focus on markets with enough depth for signal reliability, consistent with PRD1 low-liquidity risk notes.
+- `thresholds.low_oi_confirmation: -0.15`
+  - Rationale: Require a meaningful (<= -15%) open-interest contraction as a confirmation signal for band-breach alerts.
+- `thresholds.low_ambiguity: 0.35`
+  - Rationale: Treat low ambiguity scores as confirmation only when the question framing is clear enough for deterministic interpretation.
+- `thresholds.volume_spike: 2.0`
+  - Rationale: Use a 2x volume-velocity gate to prioritize alerts with materially elevated activity.
+- `min_trust_score: 60.0`
+  - Rationale: Suppress alerts for low-trust markets by default while preserving medium/high-trust and missing-trust records for operator review.
 
 ## Model profile defaults
 

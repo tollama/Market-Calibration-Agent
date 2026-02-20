@@ -219,7 +219,31 @@ Observed results:
 ## Remaining risks / follow-up
 1. **tollama endpoint schema drift risk**: adapter isolates app contract but still requires updates if runtime schema changes.
 2. **Conformal coverage monitoring still needed in prod dashboards**: updater/state are in place, but alert thresholds for calibration drift should be wired to observability.
-3. **Observability backend wiring pending**: rules/runbook/evaluator are added; metrics exporter/dashboard integration still needed per environment.
+
+## PRD1+PRD2 observability-ops gap closure
+P2-09 runtime observability emission + ops integration is now closed.
+
+### Implemented
+- Added in-service runtime metrics emitter: `runners/tsfm_observability.py`
+- Wired metric emission in `TSFMRunnerService.forecast()` for request/latency/fallback/cache/breaker/crossing/invalid/interval/target coverage signals.
+- Added scrape endpoint: `GET /metrics` in `api/app.py`.
+- Added ops doc + smoke script:
+  - `docs/ops/prd2-runtime-observability.md`
+  - `scripts/prd2_runtime_metrics_smoke.py`
+- Added tests:
+  - `tests/unit/test_tsfm_runtime_observability.py`
+  - `tests/unit/test_api_metrics_endpoint.py`
+
+### Validation outputs
+```bash
+python3 -m pytest -q tests/unit/test_tsfm_runtime_observability.py tests/unit/test_api_metrics_endpoint.py tests/unit/test_evaluate_tsfm_canary_gate.py tests/unit/test_validate_prd2_perf_bench.py
+```
+Observed: all tests PASS.
+
+```bash
+python3 scripts/prd2_runtime_metrics_smoke.py
+```
+Observed: `METRICS_SMOKE_PASS` with required runtime metric families present.
 
 ## Perf CI gate
 - Added isolated workflow: `.github/workflows/prd2-perf-gate.yml`.
@@ -476,3 +500,25 @@ Added targeted tests to mirror `.openclaw-plans/PRD12_GAP_MATRIX.md` unresolved 
   - runtime adapter config wiring + conversion of ms backoff/jitter to seconds
   - cache max-entry eviction behavior
   - API acceptance/pass-through of gap metadata fields
+
+## PRD1+PRD2 calibration-risk gap closure
+Closed remaining P2-07 gap for offline quality governance (time split + event-holdout interval evaluation) and strengthened calibration-risk observability hooks.
+
+### Implemented
+- Added `calibration/interval_metrics.py`:
+  - interval metrics primitives (`coverage`, `width`, `pinball`) and unified `compute_interval_metrics` output
+  - supports both 80% (`q10/q90`) and optional 90% (`q05/q95`) coverage tracks.
+- Added `pipelines/evaluate_tsfm_offline.py`:
+  - deterministic **time split** (latest 20%) and **event-holdout** split
+  - model comparison for `baseline`, `tsfm_raw`, `tsfm_conformal` under identical splits
+  - operational proxies: `breach_rate`, `breach_followthrough_rate` (meaningful move threshold/window configurable)
+  - reproducible artifacts:
+    - `offline_eval_metrics.csv`
+    - `offline_eval_summary.json`
+- Added ops runbook: `docs/ops/prd2-offline-eval.md`.
+
+### Tests added
+- `tests/unit/test_interval_metrics.py`
+  - validates coverage/width/pinball correctness and optional 90% path.
+- `tests/integration/test_tsfm_event_holdout_eval.py`
+  - validates end-to-end event-holdout pipeline execution and artifact generation.

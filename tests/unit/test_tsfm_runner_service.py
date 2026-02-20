@@ -62,3 +62,27 @@ def test_tsfm_service_fixes_quantile_crossing_and_clips() -> None:
         q50 = response["yhat_q"]["0.5"][idx]
         q90 = response["yhat_q"]["0.9"][idx]
         assert 0 <= q10 <= q50 <= q90 <= 1
+
+
+def test_tsfm_service_cache_hit_sets_meta_flag() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+    req = _request()
+
+    first = service.forecast(req)
+    second = service.forecast(req)
+
+    assert first["meta"]["cache_hit"] is False
+    assert second["meta"]["cache_hit"] is True
+
+
+def test_tsfm_service_circuit_breaker_opens_after_consecutive_failures() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter(fail=True))
+    req = _request()
+
+    service.forecast(req)
+    service.forecast({**req, "as_of_ts": "2026-02-20T00:05:00Z"})
+    service.forecast({**req, "as_of_ts": "2026-02-20T00:10:00Z"})
+    response = service.forecast({**req, "as_of_ts": "2026-02-20T00:15:00Z"})
+
+    assert response["meta"]["fallback_used"] is True
+    assert any("circuit_breaker_open" in w for w in response["meta"]["warnings"])

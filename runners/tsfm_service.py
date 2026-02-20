@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from calibration.conformal import ConformalAdjustment, apply_conformal_adjustment
 from runners.baselines import forecast_baseline_band
@@ -60,9 +63,13 @@ class TSFMServiceConfig:
     max_gap_minutes: int = 60
     min_points_for_tsfm: int = 32
     min_interval_width: float = 0.02
-    max_interval_width: float = 0.9
+    max_interval_width: float = 0.6
     baseline_method: str = "EWMA"
     baseline_only_liquidity: str = "low"
+    # performance defaults
+    cache_ttl_s: int = 60
+    circuit_breaker_failures: int = 3
+    circuit_breaker_cooldown_s: int = 30
 
 
 class TSFMRunnerService:
@@ -76,8 +83,49 @@ class TSFMRunnerService:
         self.adapter = adapter or TollamaAdapter(TollamaConfig())
         self.config = config or TSFMServiceConfig()
         self.conformal_adjustment = conformal_adjustment
+        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._consecutive_failures = 0
+        self._breaker_open_until = 0.0
+
+    def _cache_key(self, request: Mapping[str, Any]) -> str:
+        stable = {
+            "market_id": request.get("market_id"),
+            "as_of_ts": request.get("as_of_ts"),
+            "freq": request.get("freq"),
+            "horizon_steps": request.get("horizon_steps"),
+            "quantiles": request.get("quantiles"),
+            "y": request.get("y"),
+            "x_past": request.get("x_past"),
+            "x_future": request.get("x_future"),
+            "transform": request.get("transform"),
+            "model": request.get("model"),
+            "liquidity_bucket": request.get("liquidity_bucket"),
+        }
+        encoded = json.dumps(stable, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _read_cache(self, key: str) -> dict[str, Any] | None:
+        row = self._cache.get(key)
+        if row is None:
+            return None
+        expires_at, value = row
+        if time.time() > expires_at:
+            self._cache.pop(key, None)
+            return None
+        return dict(value)
+
+    def _write_cache(self, key: str, value: dict[str, Any]) -> None:
+        self._cache[key] = (time.time() + self.config.cache_ttl_s, dict(value))
 
     def forecast(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        cache_key = self._cache_key(request)
+        cached = self._read_cache(cache_key)
+        if cached is not None:
+            cached_meta = dict(cached.get("meta", {}))
+            cached_meta["cache_hit"] = True
+            cached["meta"] = cached_meta
+            return cached
+
         market_id = str(request["market_id"])
         as_of_ts = str(request.get("as_of_ts") or datetime.now(timezone.utc).isoformat())
         freq = str(request.get("freq") or self.config.default_freq)
@@ -98,6 +146,10 @@ class TSFMRunnerService:
         if request.get("liquidity_bucket", "").lower() == self.config.baseline_only_liquidity:
             fallback_reason = "baseline_only_liquidity_bucket"
 
+        now = time.time()
+        if now < self._breaker_open_until:
+            fallback_reason = "circuit_breaker_open"
+
         y_input = y_raw[-self.config.input_len_steps :]
         use_logit = space.lower() == "logit"
         y_model = [_logit(v, eps) if use_logit else v for v in y_input]
@@ -111,6 +163,8 @@ class TSFMRunnerService:
             "transform": space,
             "warnings": warnings,
             "fallback_used": False,
+            "cache_hit": False,
+            "circuit_breaker_open": now < self._breaker_open_until,
         }
 
         if fallback_reason is None:
@@ -127,7 +181,11 @@ class TSFMRunnerService:
                     params=((request.get("model") or {}).get("params") or {}),
                 )
                 meta.update(adapter_meta)
+                self._consecutive_failures = 0
             except Exception as exc:  # noqa: BLE001
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self.config.circuit_breaker_failures:
+                    self._breaker_open_until = time.time() + self.config.circuit_breaker_cooldown_s
                 fallback_reason = f"tollama_error:{exc}"
 
         if fallback_reason is not None:
@@ -163,21 +221,17 @@ class TSFMRunnerService:
         lower = quantile_paths.get(0.1)
         upper = quantile_paths.get(0.9)
         if lower and upper:
-            for idx, (lo, hi) in enumerate(zip(lower, upper)):
-                width = hi - lo
+            for idx, (_, _) in enumerate(zip(lower, upper)):
+                width = quantile_paths[0.9][idx] - quantile_paths[0.1][idx]
                 if width < self.config.min_interval_width:
                     center = quantile_paths[0.5][idx]
-                    lo = _clip01(center - self.config.min_interval_width / 2)
-                    hi = _clip01(center + self.config.min_interval_width / 2)
-                    quantile_paths[0.1][idx] = lo
-                    quantile_paths[0.9][idx] = hi
+                    quantile_paths[0.1][idx] = _clip01(center - self.config.min_interval_width / 2)
+                    quantile_paths[0.9][idx] = _clip01(center + self.config.min_interval_width / 2)
                     warnings.append("interval_min_width_enforced")
                 elif width > self.config.max_interval_width:
                     center = quantile_paths[0.5][idx]
-                    lo = _clip01(center - self.config.max_interval_width / 2)
-                    hi = _clip01(center + self.config.max_interval_width / 2)
-                    quantile_paths[0.1][idx] = lo
-                    quantile_paths[0.9][idx] = hi
+                    quantile_paths[0.1][idx] = _clip01(center - self.config.max_interval_width / 2)
+                    quantile_paths[0.9][idx] = _clip01(center + self.config.max_interval_width / 2)
                     warnings.append("interval_max_width_clamped")
 
         response = {
@@ -199,4 +253,5 @@ class TSFMRunnerService:
             adjusted = apply_conformal_adjustment(last_band, self.conformal_adjustment)
             response["conformal_last_step"] = adjusted
 
+        self._write_cache(cache_key, response)
         return response

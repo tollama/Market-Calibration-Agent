@@ -7,6 +7,9 @@ from typing import Any, Mapping, Sequence
 
 import httpx
 
+DEFAULT_MAX_CONNECTIONS = 64
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 32
+
 
 class TollamaError(RuntimeError):
     """Raised when tollama call fails after retries."""
@@ -20,13 +23,25 @@ class TollamaConfig:
     retry_count: int = 1
     retry_jitter_s: float = 0.2
     token: str | None = None
+    max_connections: int = DEFAULT_MAX_CONNECTIONS
+    max_keepalive_connections: int = DEFAULT_MAX_KEEPALIVE_CONNECTIONS
 
 
 class TollamaAdapter:
-    """Thin adapter around tollama runtime API with retry/jitter."""
+    """Thin adapter around tollama runtime API with retry/jitter and pooled connections."""
 
     def __init__(self, config: TollamaConfig | None = None) -> None:
         self.config = config or TollamaConfig()
+        self._client = httpx.Client(
+            timeout=self.config.timeout_s,
+            limits=httpx.Limits(
+                max_connections=self.config.max_connections,
+                max_keepalive_connections=self.config.max_keepalive_connections,
+            ),
+        )
+
+    def close(self) -> None:
+        self._client.close()
 
     def forecast(
         self,
@@ -62,12 +77,11 @@ class TollamaAdapter:
         for idx in range(attempts):
             started = time.perf_counter()
             try:
-                with httpx.Client(timeout=self.config.timeout_s) as client:
-                    response = client.post(
-                        f"{self.config.base_url.rstrip('/')}{self.config.endpoint}",
-                        json=payload,
-                        headers=headers,
-                    )
+                response = self._client.post(
+                    f"{self.config.base_url.rstrip('/')}{self.config.endpoint}",
+                    json=payload,
+                    headers=headers,
+                )
                 response.raise_for_status()
                 body = response.json()
                 quantile_payload = body.get("quantiles", body.get("yhat_q", {}))

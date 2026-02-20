@@ -1,0 +1,28 @@
+tsfm:
+  freq: 5m
+  input_len_steps: 288
+  horizon_steps: 12
+  quantiles: [0.1, 0.5, 0.9]
+  transform:
+    space: logit
+    eps: 1e-6
+  missing:
+    max_gap_minutes: 60
+  timeouts:
+    tollama_timeout_s: 2.0
+    retry_count: 1
+  perf:
+    cache_ttl_s: 60
+    circuit_breaker_failures: 3
+    circuit_breaker_cooldown_s: 30
+    max_connections: 100
+    max_keepalive_connections: 20
+  fallback:
+    baseline_method: EWMA
+    baseline_only_liquidity_bucket: low
+  interval_sanity:
+    min_width: 0.02
+    max_width: 0.9
+  slo:
+    per_request_p95_ms: 300
+    cycle_top_n_seconds: 60

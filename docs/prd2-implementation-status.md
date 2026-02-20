@@ -48,10 +48,23 @@
   - 정상 경로
   - adapter 오류 fallback
   - crossing/clipping 안정성
+  - cache hit 메타 플래그
+  - circuit breaker open fallback
 - `tests/unit/test_api_tsfm_forecast.py`
   - API contract test
 - `tests/unit/test_tsfm_model_license_guard.py`
   - 라이선스 가드레일 test
+
+## Stage 9 — 성능/처리량 강화
+- `TSFMRunnerService`에 성능 안정화 기본기 추가:
+  - 요청 해시 기반 TTL cache (`cache_ttl_s=60`)
+  - 연속 실패 기반 circuit breaker (`3회 실패`, `30s` cooldown)
+- `TollamaAdapter` 커넥션 풀 기본값 추가:
+  - `max_connections=100`
+  - `max_keepalive_connections=20`
+- 성능 스모크 벤치마크 추가:
+  - `pipelines/bench_tsfm_runner_perf.py`
+  - p95/사이클 시간 SLO budget check 내장
 
 ---
 
@@ -66,6 +79,9 @@
 - `min_points_for_tsfm=32`: 극단적 짧은 시계열 보호
 - `min_interval_width=0.02, max_interval_width=0.9`: 과도한 협/광 밴드 방지
 - `baseline_only_liquidity=low`: 극저유동 시장에서는 보수적 운영
+- `cache_ttl_s=60`: 5분 cadence에서 동일 요청 burst 흡수
+- `circuit_breaker_failures=3, cooldown=30s`: 장애시 baseline 전환을 빠르게 고정
+- `http pool: max_connections=100, keepalive=20`: top-N 배치 처리량 안정화
 
 ## 실행 방법
 1. 의존성 설치
@@ -105,3 +121,13 @@ pytest tests/unit/test_tsfm_runner_service.py tests/unit/test_api_tsfm_forecast.
   1) API schema 불일치
   2) fallback 동작/quantile monotonicity
   3) config license guard
+
+## 성능 스모크 벤치마크 (재현 가능)
+```bash
+PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 200 --unique 20 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60
+PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 200 --unique 200 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60
+```
+- 체크 항목:
+  - `latency_p95_ms <= 300`
+  - `elapsed_s <= 60`
+- 기대 출력: 마지막 줄 `SLO_PASS`

@@ -447,6 +447,26 @@ Added focused acceptance-gap tests under `tests/unit/test_prd12_acceptance_gap_c
   - Traceability: **PRD2 AC #4 Product alignment**.
   - Verifies TSFM-produced bands yield deterministic `BAND_BREACH` signal and consistent severity for Gate-1-compatible alerting.
 
+### Matrix-targeted unresolved-gap acceptance tests (P2-11, P2-09, P2-07, I-15, I-01)
+Added targeted tests to mirror `.openclaw-plans/PRD12_GAP_MATRIX.md` unresolved entries:
+- **P2-11**
+  - `tests/unit/test_api_tsfm_auth.py::test_p2_11_tsfm_forecast_requires_inbound_auth_token`
+  - `tests/unit/test_api_tsfm_rate_limit.py::test_p2_11_tsfm_forecast_enforces_rate_limit_with_retry_after`
+  - Current run status: **Fail-before** (API currently allows unauthenticated/unlimited calls).
+- **P2-09**
+  - `tests/unit/test_tsfm_metrics_emission.py::test_p2_09_metrics_endpoint_is_exposed_for_runtime_observability`
+  - Current run status: **Fail-before** (`/metrics` not exposed in current app routes).
+- **P2-07**
+  - `tests/unit/test_interval_metrics.py::{test_p2_07_interval_metrics_module_exists,test_p2_07_offline_eval_pipeline_exists}`
+  - Current run status: partial (**interval_metrics.py exists**, **evaluate_tsfm_offline.py missing**).
+- **I-15**
+  - `tests/integration/test_alert_end_to_end_pipeline.py::test_i15_end_to_end_alert_gate_transitions_are_deterministic`
+  - Current run status: **Pass** (gate/severity transition determinism covered).
+- **I-01**
+  - `tests/unit/test_gamma_raw_path_contract.py::test_i01_gamma_raw_path_contract_exposes_canonical_prd_dt_partition`
+  - Current run status: **Pass** (canonical `raw/gamma/dt=...` metadata contract asserted).
+  - Existing legacy acceptance tests (`tests/unit/test_i01_acceptance.py`) currently fail against additional `gamma_dt/*` keys, indicating contract drift that should be normalized in product path/output schema.
+
 ## PRD1+PRD2 forecast-serving gap closure
 - Wired `TSFMRunnerService.from_runtime_config()` to instantiate `TollamaAdapter` from `tsfm.adapter` runtime fields (timeout/retry/backoff/jitter/pool), closing config-to-runtime drift in serving path.
 - Aligned default tollama timeout to PRD2 default (`2.0s`) in both adapter defaults and `configs/tsfm_runtime.yaml`.

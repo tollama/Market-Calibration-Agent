@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
 import httpx
@@ -45,6 +46,23 @@ class TollamaAdapter:
     def close(self) -> None:
         self._client.close()
 
+    @staticmethod
+    def _build_timestamps(length: int, freq: str) -> list[str]:
+        if length <= 0:
+            return []
+        step = timedelta(minutes=5)
+        text = str(freq).strip().lower()
+        try:
+            if text.endswith("m"):
+                step = timedelta(minutes=max(1, int(text[:-1])))
+            elif text.endswith("h"):
+                step = timedelta(hours=max(1, int(text[:-1])))
+        except Exception:  # noqa: BLE001
+            step = timedelta(minutes=5)
+
+        start = datetime.now(timezone.utc) - step * (length - 1)
+        return [(start + step * i).replace(microsecond=0).isoformat().replace("+00:00", "Z") for i in range(length)]
+
     def forecast(
         self,
         *,
@@ -58,17 +76,37 @@ class TollamaAdapter:
         x_future: Mapping[str, Sequence[float]] | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> tuple[dict[float, list[float]], dict[str, Any]]:
-        payload: dict[str, Any] = {
-            "model": model_name,
-            "model_version": model_version,
-            "series": list(series),
-            "horizon_steps": int(horizon_steps),
-            "freq": freq,
-            "quantiles": [float(q) for q in quantiles],
-            "x_past": dict(x_past or {}),
-            "x_future": dict(x_future or {}),
-            "params": dict(params or {}),
-        }
+        # Support both legacy tollama TSFM payloads and current Ollama-style forecast payloads.
+        if self.config.endpoint in {"/v1/forecast", "/api/forecast"}:
+            payload: dict[str, Any] = {
+                "model": model_name,
+                "horizon": int(horizon_steps),
+                "quantiles": [float(q) for q in quantiles],
+                "series": [
+                    {
+                        "id": "series-0",
+                        "freq": freq,
+                        "timestamps": self._build_timestamps(len(series), freq),
+                        "target": [float(v) for v in series],
+                        "past_covariates": dict(x_past or {}) or None,
+                        "future_covariates": dict(x_future or {}) or None,
+                    }
+                ],
+                "options": dict(params or {}),
+                "parameters": {},
+            }
+        else:
+            payload = {
+                "model": model_name,
+                "model_version": model_version,
+                "series": list(series),
+                "horizon_steps": int(horizon_steps),
+                "freq": freq,
+                "quantiles": [float(q) for q in quantiles],
+                "x_past": dict(x_past or {}),
+                "x_future": dict(x_future or {}),
+                "params": dict(params or {}),
+            }
 
         headers = {"Content-Type": "application/json"}
         if self.config.token:
@@ -87,7 +125,12 @@ class TollamaAdapter:
                 response.raise_for_status()
                 body = response.json()
                 quantile_payload = body.get("quantiles", body.get("yhat_q", {}))
-                if not isinstance(quantile_payload, Mapping):
+                if (not isinstance(quantile_payload, Mapping)) or (isinstance(quantile_payload, Mapping) and not quantile_payload):
+                    forecasts = body.get("forecasts") if isinstance(body, Mapping) else None
+                    if isinstance(forecasts, list) and forecasts:
+                        first = forecasts[0] if isinstance(forecasts[0], Mapping) else {}
+                        quantile_payload = first.get("quantiles", {}) if isinstance(first, Mapping) else {}
+                if (not isinstance(quantile_payload, Mapping)) or not quantile_payload:
                     raise TollamaError("Invalid tollama response: quantiles payload missing")
 
                 parsed: dict[float, list[float]] = {}

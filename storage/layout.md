@@ -16,6 +16,15 @@ All data is stored under a single root directory.
         *.parquet
 ```
 
+### Gamma raw ingest compatibility layout (PRD1 I-01)
+
+`pipelines/ingest_gamma_raw.py` writes both layouts during migration-safe operation:
+
+- Canonical PRD path: `raw/gamma/dt=YYYY-MM-DD/{markets,events,markets_original,events_original}.jsonl`
+- Legacy dataset-scoped path: `raw/gamma/{markets,events,markets_original,events_original}/dt=YYYY-MM-DD/data.jsonl`
+
+This dual-write behavior preserves existing readers while aligning with PRD wording.
+
 ## Partition rule
 
 - Partition key: `dt`

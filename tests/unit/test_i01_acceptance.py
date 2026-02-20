@@ -131,19 +131,33 @@ def _assert_output_path_contract(
         "gamma/events",
         "gamma/markets_original",
         "gamma/events_original",
+        "gamma_dt/markets",
+        "gamma_dt/events",
+        "gamma_dt/markets_original",
+        "gamma_dt/events_original",
     }
     for dataset, expected_path in expected.items():
         grouped_key = f"gamma/{dataset}"
         legacy_key = f"gamma_{dataset}"
+        canonical_key = f"gamma_dt/{dataset}"
+        canonical_path = root / "raw" / "gamma" / f"dt={dt}" / f"{dataset}.jsonl"
+
         assert output_paths[grouped_key] == output_paths[legacy_key]
         assert output_paths[grouped_key] == str(expected_path)
         assert output_paths[legacy_key] == str(expected_path)
+        assert output_paths[canonical_key] == str(canonical_path)
         assert expected_path.relative_to(root).parts == (
             "raw",
             "gamma",
             dataset,
             f"dt={dt}",
             "data.jsonl",
+        )
+        assert canonical_path.relative_to(root).parts == (
+            "raw",
+            "gamma",
+            f"dt={dt}",
+            f"{dataset}.jsonl",
         )
     return expected
 

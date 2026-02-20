@@ -14,7 +14,7 @@ Status legend:
 
 | Req ID | Requirement (PRD1) | Implementation evidence | Test evidence | Status |
 |---|---|---|---|---|
-| I-01 | Gamma connector: pagination/retry/rate-limit + raw save | `connectors/polymarket_gamma.py`, `pipelines/ingest_gamma_raw.py` | `tests/unit/test_gamma_connector.py`, `test_gamma_raw_ingest*.py`, `test_i01_acceptance.py` | **Partial** |
+| I-01 | Gamma connector: pagination/retry/rate-limit + raw save | `connectors/polymarket_gamma.py`, `pipelines/ingest_gamma_raw.py` | `tests/unit/test_gamma_connector.py`, `test_gamma_raw_ingest*.py`, `test_i01_acceptance.py` | **Implemented** |
 | I-02 | Subgraph GraphQL connector + templates + partial-fail reporting | `connectors/polymarket_subgraph.py` | `tests/unit/test_subgraph_connector.py` | **Implemented** |
 | I-03 | Market registry (ID mapping, slug history, conflicts) | `schemas/market_registry.py`, `registry/build_registry.py`, `registry/conflict_rules.py`, `pipelines/registry_linker.py` | `tests/unit/test_registry_conflicts.py`, `test_registry_linker.py` | **Implemented** |
 | I-04 | Raw/derived storage split + partition rules | `storage/writers.py`, `storage/layout.md` | `tests/unit/test_storage_writers.py`, `test_derived_store_loaders.py` | **Implemented** |
@@ -36,7 +36,7 @@ Status legend:
 | I-20 | Read-only API/CLI for scoreboard/alerts/postmortem | `api/app.py`, `api/dependencies.py`, `api/schemas.py` | `tests/unit/test_api_*.py`, `test_i20_acceptance.py` | **Implemented** |
 
 Notes:
-- I-01 partial reason: current raw path convention is dataset-scoped (`raw/gamma/{dataset}/dt=...`) vs PRD wording (`raw/gamma/dt=...`).
+- I-01: migration-safe dual-write is in place (`raw/gamma/dt=.../*.jsonl` + `raw/gamma/{dataset}/dt=.../data.jsonl`).
 - I-15 partial reason: rule logic/unit tests are strong, but explicit network-including ingest→publish integration regression remains limited.
 
 ---
@@ -62,25 +62,21 @@ Notes:
 
 ## C) Unresolved / action list
 
-1. **Align I-01 raw path contract**
-   - Decide canonical path contract: PRD wording (`raw/gamma/dt=...`) vs implemented dataset-scoped layout.
-   - Update either PRD/docs or ingestion code/tests to remove ambiguity.
-
-2. **Close I-15 full-path integration gap**
+1. **Close I-15 full-path integration gap**
    - Add at least one network-including ingest→publish regression (Gamma/Subgraph/WS mocks or controlled live smoke).
 
-3. **PRD2 observability implementation closure**
+2. **PRD2 observability implementation closure**
    - Add in-process metrics emission (e.g., Prometheus instrumentation for latency/error/fallback/crossing) and tests.
    - Keep dashboard/rules aligned to emitted metric names.
 
-4. **PRD2 security hardening (service edge)**
+3. **PRD2 security hardening (service edge)**
    - Add inbound API auth and request rate-limiting at service layer or gateway contract.
    - Document enforcement point and add automated tests.
 
-5. **PRD2 offline evaluation completeness**
+4. **PRD2 offline evaluation completeness**
    - Add explicit event-holdout evaluation pipeline/tests (not just perf smoke), and store reproducible artifacts.
 
-6. **Track PRD2 open questions as decision records**
+5. **Track PRD2 open questions as decision records**
    - Record final decisions for tollama contract evolution, default y-definition fallback priority, calibration window default, and top-N selection strategy.
 
 ---
@@ -89,8 +85,8 @@ Notes:
 
 Across PRD1 (20 rows) + PRD2 (12 rows) = **32 traceability rows**:
 
-- **Implemented:** 26
-- **Partial:** 6
+- **Implemented:** 27
+- **Partial:** 5
 - **Missing:** 0
 
 (Partial items are listed in section C for closure.)

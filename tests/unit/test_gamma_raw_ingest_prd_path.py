@@ -85,12 +85,18 @@ def _assert_prd_path_meta_and_legacy_output_contract(
         "gamma/events",
         "gamma/markets_original",
         "gamma/events_original",
+        "gamma_dt/markets",
+        "gamma_dt/events",
+        "gamma_dt/markets_original",
+        "gamma_dt/events_original",
     }
     for dataset in ("markets", "events", "markets_original", "events_original"):
         grouped_key = f"gamma/{dataset}"
         legacy_key = f"gamma_{dataset}"
+        canonical_key = f"gamma_dt/{dataset}"
         grouped_path = Path(output_paths[grouped_key])
         legacy_path = Path(output_paths[legacy_key])
+        canonical_path = Path(output_paths[canonical_key])
 
         assert grouped_path == legacy_path
         assert grouped_path.relative_to(root).parts == (
@@ -99,6 +105,12 @@ def _assert_prd_path_meta_and_legacy_output_contract(
             dataset,
             expected_dt_partition,
             "data.jsonl",
+        )
+        assert canonical_path.relative_to(root).parts == (
+            "raw",
+            "gamma",
+            expected_dt_partition,
+            f"{dataset}.jsonl",
         )
         assert grouped_path.parent.name == expected_dt_partition
         assert grouped_path.parent.parent.parent == expected_prd_path.parent

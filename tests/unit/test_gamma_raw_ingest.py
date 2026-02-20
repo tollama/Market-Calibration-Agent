@@ -92,6 +92,14 @@ def test_ingest_gamma_raw_fetches_writes_and_dedupes(tmp_path: Path) -> None:
         "gamma/markets_original": 3,
         "gamma/events_original": 2,
     }
+    canonical_markets_path = tmp_path / "raw" / "gamma" / "dt=2026-02-20" / "markets.jsonl"
+    canonical_events_path = tmp_path / "raw" / "gamma" / "dt=2026-02-20" / "events.jsonl"
+    canonical_markets_original_path = (
+        tmp_path / "raw" / "gamma" / "dt=2026-02-20" / "markets_original.jsonl"
+    )
+    canonical_events_original_path = (
+        tmp_path / "raw" / "gamma" / "dt=2026-02-20" / "events_original.jsonl"
+    )
     assert summary["output_paths"] == {
         "gamma_markets": str(markets_path),
         "gamma_events": str(events_path),
@@ -101,6 +109,10 @@ def test_ingest_gamma_raw_fetches_writes_and_dedupes(tmp_path: Path) -> None:
         "gamma/events": str(events_path),
         "gamma/markets_original": str(markets_original_path),
         "gamma/events_original": str(events_original_path),
+        "gamma_dt/markets": str(canonical_markets_path),
+        "gamma_dt/events": str(canonical_events_path),
+        "gamma_dt/markets_original": str(canonical_markets_original_path),
+        "gamma_dt/events_original": str(canonical_events_original_path),
     }
 
     assert _read_jsonl(markets_path) == [
@@ -119,6 +131,10 @@ def test_ingest_gamma_raw_fetches_writes_and_dedupes(tmp_path: Path) -> None:
         {"record_id": "e-1", "title": "event-1"},
         {"record_id": "e-1", "title": "event-1-updated"},
     ]
+    assert _read_jsonl(canonical_markets_path) == _read_jsonl(markets_path)
+    assert _read_jsonl(canonical_events_path) == _read_jsonl(events_path)
+    assert _read_jsonl(canonical_markets_original_path) == _read_jsonl(markets_original_path)
+    assert _read_jsonl(canonical_events_original_path) == _read_jsonl(events_original_path)
 
 
 def test_run_ingest_gamma_raw_uses_defaults(tmp_path: Path) -> None:
@@ -153,6 +169,14 @@ def test_run_ingest_gamma_raw_uses_defaults(tmp_path: Path) -> None:
         "gamma/markets_original": 1,
         "gamma/events_original": 1,
     }
+    canonical_markets_path = tmp_path / "raw" / "gamma" / "dt=2026-02-21" / "markets.jsonl"
+    canonical_events_path = tmp_path / "raw" / "gamma" / "dt=2026-02-21" / "events.jsonl"
+    canonical_markets_original_path = (
+        tmp_path / "raw" / "gamma" / "dt=2026-02-21" / "markets_original.jsonl"
+    )
+    canonical_events_original_path = (
+        tmp_path / "raw" / "gamma" / "dt=2026-02-21" / "events_original.jsonl"
+    )
     assert summary["output_paths"] == {
         "gamma_markets": str(markets_path),
         "gamma_events": str(events_path),
@@ -162,8 +186,16 @@ def test_run_ingest_gamma_raw_uses_defaults(tmp_path: Path) -> None:
         "gamma/events": str(events_path),
         "gamma/markets_original": str(markets_original_path),
         "gamma/events_original": str(events_original_path),
+        "gamma_dt/markets": str(canonical_markets_path),
+        "gamma_dt/events": str(canonical_events_path),
+        "gamma_dt/markets_original": str(canonical_markets_original_path),
+        "gamma_dt/events_original": str(canonical_events_original_path),
     }
     assert markets_path.exists()
     assert events_path.exists()
     assert markets_original_path.exists()
     assert events_original_path.exists()
+    assert canonical_markets_path.exists()
+    assert canonical_events_path.exists()
+    assert canonical_markets_original_path.exists()
+    assert canonical_events_original_path.exists()

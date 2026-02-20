@@ -60,6 +60,12 @@ def _clone_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def _canonical_filename(dataset: str) -> str:
+    if dataset.startswith("gamma/"):
+        dataset = dataset.split("/", 1)[1]
+    return f"{dataset}.jsonl"
+
+
 async def ingest_gamma_raw(
     *,
     connector: _GammaConnector,
@@ -128,12 +134,40 @@ async def ingest_gamma_raw(
         dt=dt,
     )
 
+    # PRD1 I-01 canonical partition contract: raw/gamma/dt=YYYY-MM-DD/*.jsonl
+    canonical_markets_path = raw_writer.write(
+        markets,
+        dataset="gamma",
+        dt=dt,
+        filename=_canonical_filename("gamma/markets"),
+        dedupe_key="record_id",
+    )
+    canonical_events_path = raw_writer.write(
+        events,
+        dataset="gamma",
+        dt=dt,
+        filename=_canonical_filename("gamma/events"),
+        dedupe_key="record_id",
+    )
+    canonical_markets_original_path = raw_writer.write(
+        markets_original,
+        dataset="gamma",
+        dt=dt,
+        filename=_canonical_filename("gamma/markets_original"),
+    )
+    canonical_events_original_path = raw_writer.write(
+        events_original,
+        dataset="gamma",
+        dt=dt,
+        filename=_canonical_filename("gamma/events_original"),
+    )
+
     normalized_record_count = len(markets) + len(events)
     original_record_count = len(markets_original) + len(events_original)
     raw_record_count = normalized_record_count + original_record_count
 
-    dt_partition = markets_path.parent.name
-    prd_raw_partition_path = markets_path.parent.parent.parent / dt_partition
+    dt_partition = canonical_markets_path.parent.name
+    prd_raw_partition_path = canonical_markets_path.parent
     prd_raw_partition_relpath = str(Path("raw") / "gamma" / dt_partition)
 
     return {
@@ -161,6 +195,10 @@ async def ingest_gamma_raw(
             "gamma/events": str(events_path),
             "gamma/markets_original": str(markets_original_path),
             "gamma/events_original": str(events_original_path),
+            "gamma_dt/markets": str(canonical_markets_path),
+            "gamma_dt/events": str(canonical_events_path),
+            "gamma_dt/markets_original": str(canonical_markets_original_path),
+            "gamma_dt/events_original": str(canonical_events_original_path),
         },
     }
 

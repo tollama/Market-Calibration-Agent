@@ -10,7 +10,7 @@
 
 | 이슈 | 상태 | 현재 코드 기준 요약 |
 | --- | --- | --- |
-| I-01 | Partial | `connectors/polymarket_gamma.py`에 페이지네이션/재시도/RPS 제한 + `fetch_markets_raw`/`fetch_events_raw`가 구현됐고, `pipelines/ingest_gamma_raw.py`에서 `gamma/markets_original`, `gamma/events_original` 원문 저장까지 연결됨. 다만 저장 경로가 `raw/gamma/dt=...` 단일 규약이 아니라 `raw/gamma/{markets,events,...}/dt=...` 구조라 PRD 문구와 불일치 |
+| I-01 | Implemented | `connectors/polymarket_gamma.py`에 페이지네이션/재시도/RPS 제한 + `fetch_markets_raw`/`fetch_events_raw`가 구현되어 있고, `pipelines/ingest_gamma_raw.py`가 PRD canonical 경로(`raw/gamma/dt=.../*.jsonl`)와 기존 dataset-scoped 경로(`raw/gamma/{dataset}/dt=.../data.jsonl`)를 dual-write로 함께 지원해 마이그레이션 안전성을 확보 |
 | I-02 | Implemented | `connectors/polymarket_subgraph.py`에 쿼리 템플릿, retry/backoff, 부분 실패 누적(`failures`), `market_id/event_id` 정규화 반환 구현 |
 | I-03 | Implemented | `registry/build_registry.py`, `registry/conflict_rules.py`, `pipelines/registry_linker.py`로 필수 식별자/충돌 규칙/slug 이력/스냅샷 enrich 연결 구현 |
 | I-04 | Implemented | `storage/writers.py`, `storage/layout.md`에 raw(JSONL)/derived(parquet) 분리, `dt=YYYY-MM-DD` 파티션, idempotent overwrite 구현 |
@@ -43,20 +43,16 @@
 
 ## 남은 항목 (AC 기준)
 
-- `I-01`: Gamma raw 저장 경로를 PRD 표기(`raw/gamma/dt=...`)와 정합화할지, 현재 세분 경로(`raw/gamma/{dataset}/dt=...`)를 PRD에 반영할지 기준 확정 필요
 - `I-15`: strict gate 산식/단위 테스트 정렬은 완료되었고, 잔여 과제는 ingest→publish 실데이터 통합 회귀에서 gate + `min_trust_score` 경계 동작 검증
 
 ## 남은 테스트/검증 공백
 
 - 실데이터 통합 회귀 부재: Gamma/Subgraph/WS 포함 ingest→publish E2E(네트워크 포함) 검증 없음
-- `I-01` AC 경계 테스트 부족: retry/rate-limit 동작과 저장 경로 규약(`raw/gamma/dt=...` vs `raw/gamma/{dataset}/dt=...`) 판정 테스트가 없음
 - `I-15`/`I-20` 핵심 회귀는 반영됨: `tests/unit/test_i15_acceptance.py`, `tests/unit/test_alert_feed_gate_rules.py`, `tests/unit/test_api_postmortem_latest.py`, `tests/unit/test_postmortem_loader_pattern.py`로 strict gate 조합과 postmortem 최신본/패턴 fallback이 검증됨
 
 ## 남은 Actionable Backlog (<=5)
 
-1. `I-01` 규약 결정: raw 저장 경로를 PRD(`raw/gamma/dt=...`)로 맞출지, 현행 경로(`raw/gamma/{dataset}/dt=...`)를 PRD에 반영할지 확정
-2. `I-01` 구현 정렬: 확정된 경로 규약에 맞춰 `pipelines/ingest_gamma_raw.py`/관련 테스트를 일치시킴
-3. 통합 회귀 보강: 네트워크 포함 ingest→publish E2E 스모크(최소 1일 샘플)로 배치 경로를 주기 검증
+1. 통합 회귀 보강: 네트워크 포함 ingest→publish E2E 스모크(최소 1일 샘플)로 배치 경로를 주기 검증
 
 ## PRD1+PRD2 alert-gates gap closure
 

@@ -324,6 +324,7 @@ Implemented a PRD2 chaos drill suite isolated to scripts/tests/docs (no core run
 pytest -q tests/integration/test_prd2_chaos_drills.py
 ```
 Result: **all tests passed locally**.
+- Added dedicated operator drill script under `scripts/chaos/` for timeout/5xx/connection-drop simulation.
 
 ## Fixture pack
 - Refreshed fixture pack with reusable scenario datasets and loader-backed tests (commit `499b966`).

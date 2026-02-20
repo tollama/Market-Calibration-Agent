@@ -36,6 +36,13 @@ def _count_items(value: Any) -> int:
         return 0
 
 
+def _resolve_stage_hook(context: PipelineRunContext, key: str) -> Any:
+    hook = context.state.get(key)
+    if callable(hook):
+        return hook
+    return None
+
+
 def _fallback_stage_build_features(context: PipelineRunContext) -> dict[str, Any]:
     feature_rows = context.state.setdefault("feature_rows", [])
     market_count = _count_items(_as_list(context.state.get("market_ids")))
@@ -79,12 +86,16 @@ def _stage_discover(context: PipelineRunContext) -> dict[str, Any]:
 
 
 def _stage_ingest(context: PipelineRunContext) -> dict[str, Any]:
-    context.state.setdefault("raw_records", [])
-    return {
-        "stage": "ingest",
-        "market_count": _count_items(context.state.get("market_ids")),
-        "raw_record_count": _count_items(context.state["raw_records"]),
-    }
+    hook = _resolve_stage_hook(context, "ingest_fn")
+    if hook is None:
+        context.state.setdefault("raw_records", [])
+        output = {}
+    else:
+        output = dict(hook(context))
+    output.setdefault("stage", "ingest")
+    output.setdefault("market_count", _count_items(context.state.get("market_ids")))
+    output.setdefault("raw_record_count", _count_items(context.state.get("raw_records")))
+    return output
 
 
 def _stage_normalize(context: PipelineRunContext) -> dict[str, Any]:
@@ -106,7 +117,9 @@ def _stage_snapshots(context: PipelineRunContext) -> dict[str, Any]:
 
 
 def _stage_cutoff(context: PipelineRunContext) -> dict[str, Any]:
-    output = dict(stage_build_cutoff_snapshots(context))
+    hook = _resolve_stage_hook(context, "cutoff_fn")
+    handler = hook if hook is not None else stage_build_cutoff_snapshots
+    output = dict(handler(context))
     output.setdefault("stage", "cutoff")
     output.setdefault("market_count", _count_items(context.state.get("market_ids")))
     output.setdefault("snapshot_count", _count_items(context.state.get("cutoff_snapshots")))
@@ -114,7 +127,9 @@ def _stage_cutoff(context: PipelineRunContext) -> dict[str, Any]:
 
 
 def _stage_features(context: PipelineRunContext) -> dict[str, Any]:
-    output = dict(stage_build_features(context))
+    hook = _resolve_stage_hook(context, "feature_fn")
+    handler = hook if hook is not None else stage_build_features
+    output = dict(handler(context))
     output.setdefault("stage", "features")
     output.setdefault("market_count", _count_items(context.state.get("market_ids")))
     if "feature_count" not in output:
@@ -126,24 +141,32 @@ def _stage_features(context: PipelineRunContext) -> dict[str, Any]:
 
 
 def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
-    context.state.setdefault("metrics", [])
+    hook = _resolve_stage_hook(context, "metric_fn")
+    if hook is None:
+        context.state.setdefault("metrics", [])
+        output = {}
+    else:
+        output = dict(hook(context))
     feature_rows = context.state.get("features")
     if feature_rows is None:
         feature_rows = context.state.get("feature_rows")
-    return {
-        "stage": "metrics",
-        "feature_count": _count_items(feature_rows),
-        "metric_count": _count_items(context.state["metrics"]),
-    }
+    output.setdefault("stage", "metrics")
+    output.setdefault("feature_count", _count_items(feature_rows))
+    output.setdefault("metric_count", _count_items(context.state.get("metrics")))
+    return output
 
 
 def _stage_publish(context: PipelineRunContext) -> dict[str, Any]:
-    context.state.setdefault("published_records", [])
-    return {
-        "stage": "publish",
-        "metric_count": _count_items(context.state.get("metrics")),
-        "published_count": _count_items(context.state["published_records"]),
-    }
+    hook = _resolve_stage_hook(context, "publish_fn")
+    if hook is None:
+        context.state.setdefault("published_records", [])
+        output = {}
+    else:
+        output = dict(hook(context))
+    output.setdefault("stage", "publish")
+    output.setdefault("metric_count", _count_items(context.state.get("metrics")))
+    output.setdefault("published_count", _count_items(context.state.get("published_records")))
+    return output
 
 
 def build_daily_stages() -> list[PipelineStage]:

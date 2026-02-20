@@ -13,6 +13,19 @@ T = TypeVar("T")
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 
+class CacheBackend(Protocol):
+    """Duck-typed cache backend interface used by LLMClient."""
+
+    def key_for(self, **parts: Any) -> str:
+        """Build a deterministic cache key."""
+
+    def get(self, key: str) -> Any | None:
+        """Fetch a cached value by key."""
+
+    def set(self, key: str, value: Any) -> None:
+        """Store a value by key."""
+
+
 class LLMBackend(Protocol):
     """Minimal backend interface expected by LLMClient."""
 
@@ -31,12 +44,18 @@ class LLMBackend(Protocol):
 class LLMClient:
     """Client for structured JSON generations."""
 
-    def __init__(self, backend: LLMBackend, cache: LLMCache | None = None) -> None:
+    def __init__(
+        self,
+        backend: LLMBackend,
+        cache: CacheBackend | None = None,
+        cache_backend: CacheBackend | None = None,
+    ) -> None:
         self._backend = backend
-        self._cache = cache if cache is not None else LLMCache()
+        resolved_cache = cache_backend if cache_backend is not None else cache
+        self._cache: CacheBackend = resolved_cache if resolved_cache is not None else LLMCache()
 
     @property
-    def cache(self) -> LLMCache:
+    def cache(self) -> CacheBackend:
         return self._cache
 
     def generate_json(

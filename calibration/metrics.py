@@ -136,6 +136,30 @@ def expected_calibration_error(
     return ece
 
 
+def calibration_slope_intercept(
+    preds: Sequence[object],
+    labels: Sequence[object],
+) -> dict[str, float]:
+    """Return least-squares slope/intercept for label ~ pred."""
+    norm_preds, norm_labels = _validate_inputs(preds, labels)
+
+    n = len(norm_preds)
+    mean_pred = sum(norm_preds) / n
+    mean_label = sum(norm_labels) / n
+
+    ss_xx = sum((pred - mean_pred) ** 2 for pred in norm_preds)
+    if ss_xx == 0.0:
+        return {"slope": 0.0, "intercept": mean_label}
+
+    ss_xy = sum(
+        (pred - mean_pred) * (label - mean_label)
+        for pred, label in zip(norm_preds, norm_labels)
+    )
+    slope = ss_xy / ss_xx
+    intercept = mean_label - slope * mean_pred
+    return {"slope": slope, "intercept": intercept}
+
+
 def summarize_metrics(
     preds: Sequence[object],
     labels: Sequence[object],
@@ -145,6 +169,19 @@ def summarize_metrics(
         "brier": brier_score(preds, labels),
         "log_loss": log_loss(preds, labels, eps=DEFAULT_EPS),
         "ece": expected_calibration_error(preds, labels, bins=DEFAULT_BINS),
+    }
+
+
+def summarize_metrics_extended(
+    preds: Sequence[object],
+    labels: Sequence[object],
+) -> dict[str, float]:
+    """Return standard calibration metrics plus slope/intercept."""
+    return {
+        "brier": brier_score(preds, labels),
+        "log_loss": log_loss(preds, labels, eps=DEFAULT_EPS),
+        "ece": expected_calibration_error(preds, labels, bins=DEFAULT_BINS),
+        **calibration_slope_intercept(preds, labels),
     }
 
 
@@ -207,6 +244,8 @@ __all__ = [
     "brier_score",
     "log_loss",
     "expected_calibration_error",
+    "calibration_slope_intercept",
     "segment_metrics",
     "summarize_metrics",
+    "summarize_metrics_extended",
 ]

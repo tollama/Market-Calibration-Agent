@@ -406,3 +406,53 @@ Result: **all tests passed locally**.
   - `tests/unit/test_api_tsfm_forecast.py` (API contract payload from fixture)
   - `tests/integration/test_prd2_fixture_scenarios.py` (integration-style scenario coverage)
 - Added ops documentation: `docs/ops/prd2-test-fixtures.md`.
+
+## PRD1+PRD2 market-pipeline gap closure
+Addressed remaining gaps in market data pipeline/feature preparation paths that were not fully aligned with PRD1 I-06/I-07 and PRD2 Data Prep defaults.
+
+### Gaps closed
+1. **Cutoff fallback policy was too strict by default**
+   - Before: nearest-before selection enforced a hard `max_lookback_seconds=900` cap, which could drop valid fallback rows.
+   - After: default lookback cap is now unbounded (`None`), matching PRD fallback intent (“nearest earlier”).
+   - Kept explicit guardrail support by allowing opt-in `max_lookback_seconds` when callers need stricter behavior.
+
+2. **Feature stage ignored optional high-frequency aggregates**
+   - Before: `stage_build_features` always computed features from cutoff rows only.
+   - After: stage now resolves optional high-frequency aggregate inputs from state (`high_freq_agg`, `high_freq_agg_rows`, `intraday_agg_rows`) and passes them into `build_features(...)` so overlay fields can be applied deterministically.
+
+3. **Default config lacked PRD2 data-prep defaults in shared app config**
+   - Added `data.prep` defaults in `configs/default.yaml`:
+     - `freq: 5m`
+     - `y_definition: mid_or_last`
+     - `max_trade_staleness_minutes: 60`
+     - `clip_eps: 1e-6`
+     - `max_gap_minutes: 60`
+
+### Tests added/updated
+- Updated `tests/unit/test_cutoff_snapshots.py`:
+  - verifies nearest-earlier fallback now works without implicit 15m cap
+  - verifies explicit `max_lookback_seconds` still enforces strict filtering
+- Updated `tests/unit/test_feature_stage.py`:
+  - verifies high-frequency aggregate overlay is used when present in stage state
+
+## PRD1+PRD2 test coverage gap closure
+Added focused acceptance-gap tests under `tests/unit/test_prd12_acceptance_gap_closure.py`:
+- `test_prd1_i15_min_trust_score_boundary_is_inclusive`
+  - Traceability: **PRD1 I-15 AC** (`min_trust_score` boundary + strict-gate pass path).
+  - Verifies threshold is inclusive (`trust_score == min_trust_score` passes, below threshold is filtered).
+- `test_prd2_ac_operational_meta_contains_observability_fields`
+  - Traceability: **PRD2 AC #3 Operational**.
+  - Verifies forecast response includes operational observability primitives (`runtime`, `latency_ms`, `fallback_used`, cache flags, breaker/degradation state, warnings).
+- `test_prd2_ac_product_alignment_band_breach_signal_is_deterministic`
+  - Traceability: **PRD2 AC #4 Product alignment**.
+  - Verifies TSFM-produced bands yield deterministic `BAND_BREACH` signal and consistent severity for Gate-1-compatible alerting.
+
+## PRD1+PRD2 forecast-serving gap closure
+- Wired `TSFMRunnerService.from_runtime_config()` to instantiate `TollamaAdapter` from `tsfm.adapter` runtime fields (timeout/retry/backoff/jitter/pool), closing config-to-runtime drift in serving path.
+- Aligned default tollama timeout to PRD2 default (`2.0s`) in both adapter defaults and `configs/tsfm_runtime.yaml`.
+- Exposed gap-gating request fields in API schema (`y_ts`, `observed_ts`, `max_gap_minutes`) so `/tsfm/forecast` can enforce PRD2 missing-gap fallback policy through API callers (not just internal calls).
+- Enforced runtime cache bound via `cache.max_entries` to prevent unbounded in-memory growth in serving runtime.
+- Added unit/API coverage for each fix:
+  - runtime adapter config wiring + conversion of ms backoff/jitter to seconds
+  - cache max-entry eviction behavior
+  - API acceptance/pass-through of gap metadata fields

@@ -506,6 +506,7 @@ Added targeted tests to mirror `.openclaw-plans/PRD12_GAP_MATRIX.md` unresolved 
   - API acceptance/pass-through of gap metadata fields
   - auth-required success/failure path and rate-limit rejection path on `/tsfm/forecast`
   - metrics endpoint payload exposure + service metric emission smoke assertion
+- Validation update (2026-02-21): reran targeted unresolved-gap suite (`test_api_tsfm_auth`, `test_api_tsfm_rate_limit`, `test_tsfm_metrics_emission`) plus related API/TSFM unit tests; all green with `429 + Retry-After` and auth-deny semantics confirmed.
 
 ## PRD1+PRD2 calibration-risk gap closure
 Closed remaining P2-07 gap for offline quality governance (time split + event-holdout interval evaluation) and strengthened calibration-risk observability hooks.

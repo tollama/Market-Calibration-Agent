@@ -57,4 +57,23 @@
 1. `I-01` 규약 결정: raw 저장 경로를 PRD(`raw/gamma/dt=...`)로 맞출지, 현행 경로(`raw/gamma/{dataset}/dt=...`)를 PRD에 반영할지 확정
 2. `I-01` 구현 정렬: 확정된 경로 규약에 맞춰 `pipelines/ingest_gamma_raw.py`/관련 테스트를 일치시킴
 3. 통합 회귀 보강: 네트워크 포함 ingest→publish E2E 스모크(최소 1일 샘플)로 배치 경로를 주기 검증
-4. `I-15` 운영 경계 검증: 실데이터 fixture에서 strict gate + `min_trust_score` 조합 경계값 회귀를 추가
+
+## PRD1+PRD2 alert-gates gap closure
+
+- **Top-N selective inference orchestration 추가(PRD2 §2/§13 반영):**
+  - `pipelines/alert_topn_orchestration.py`
+    - `rank_top_n_markets(...)`: watchlist → alert-candidate → 유동성/신뢰 복합점수 순으로 **결정론적** 정렬
+    - `orchestrate_top_n_alert_decisions(...)`: top-N만 TSFM forecast 수행 후 I-15 gate를 적용해 per-market decision(`EMIT`/`SUPPRESS`) 출력
+- **Decision output 표준화:**
+  - 선택 제외는 `SUPPRESS/TOP_N_EXCLUDED`
+  - trust 미달(또는 trust 누락) 시 `SUPPRESS/TRUST_GATE` (보수적 deterministic default)
+  - gate 미충족 시 `SUPPRESS/ALERT_GATE`
+  - 발행 시 `severity/reason_codes/alert payload/forecast_meta` 포함
+- **운영용 스모크 스크립트 추가:**
+  - `pipelines/run_topn_alert_cycle.py`
+  - 입력 후보 JSON + alerts config 기준으로 1회 top-N 결정 사이클 실행/결과 JSON 출력
+- **회귀 테스트 추가:**
+  - `tests/unit/test_alert_topn_orchestration.py`
+    - Top-N 정렬 우선순위 결정론 검증
+    - emit/suppress decision 경로(Top-N 제외, trust gate, alert gate) 검증
+    - trust 누락 시 보수적 suppress 기본값 검증

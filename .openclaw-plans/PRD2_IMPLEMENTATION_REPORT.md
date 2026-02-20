@@ -260,3 +260,80 @@ Quick sanity checks performed:
 - JSON parse validation for dashboard file: PASS
 - YAML parse validation for provider file: PASS
 - `monitoring/grafana/` and docs references present in git diff.
+
+## Release-blocker core hardening
+Implemented remaining core release blockers in service/runtime path with deterministic behavior:
+
+- **Explicit degradation state machine** (`normal -> degraded -> baseline-only`) in `TSFMRunnerService`.
+  - States are now explicit (`meta.degradation_state`) and transition from rolling-window failure rate thresholds.
+  - Recovery is deterministic and stepwise (`baseline-only -> degraded -> normal`) via configured exit thresholds.
+- **Cache hardening with stale-if-error**
+  - TTL cache now keeps a bounded stale window (`cache.stale_if_error_s`).
+  - On tollama failure, expired-but-still-stale cached response is served deterministically with
+    `meta.fallback_reason=stale_if_error`, `meta.cache_stale=true`.
+- **Circuit breaker hardening**
+  - Replaced consecutive-only behavior with rolling-window failure-rate breaker.
+  - Added explicit breaker states (`closed/open/half-open`) and half-open probe logic.
+  - Probe success closes breaker; probe failure re-opens with cooldown.
+- **Fast eligibility gates before tollama call**
+  - `min_points_for_tsfm` gate retained.
+  - `baseline_only_liquidity_bucket` gate retained.
+  - Added `max_gap_minutes` gate using request-provided `max_gap_minutes` or inferred `y_ts/observed_ts` gaps.
+- **Runtime config wiring**
+  - Added new knobs in `configs/tsfm_runtime.yaml` and wired loading via `TSFMRunnerService.from_runtime_config()`.
+  - API now bootstraps service from runtime config file (`api/app.py`).
+
+### Hardening defaults chosen
+- `cache.stale_if_error_s=120`
+- `circuit_breaker.window_s=300`
+- `circuit_breaker.min_requests=5`
+- `circuit_breaker.failure_rate_to_open=1.0`
+- `circuit_breaker.cooldown_s=120`
+- `circuit_breaker.half_open_probe_requests=2`
+- `circuit_breaker.half_open_successes_to_close=2`
+- `degradation.window_s=300`
+- `degradation.min_requests=5`
+- `degradation.degraded_enter_failure_rate=0.30`
+- `degradation.baseline_only_enter_failure_rate=0.70`
+- `degradation.degraded_exit_failure_rate=0.15`
+- `degradation.baseline_only_exit_failure_rate=0.25`
+
+### Determinism/behavior tests added
+- stale-if-error cache serving
+- rolling-window breaker open + half-open recovery
+- max-gap fast-gate fallback
+- degradation state machine transitions
+
+## Chaos drill suite
+Implemented a PRD2 chaos drill suite isolated to scripts/tests/docs (no core runtime code changes).
+
+### Added artifacts
+- `scripts/chaos/prd2_tollama_chaos_drill.py`
+  - Env-driven fault injection via `CHAOS_MODE=timeout|5xx|connection_drop`
+  - Repeated drill runs (`CHAOS_REPEATS`) for deterministic fallback checks
+  - JSON report output and non-zero exit on failed pass criteria
+- `tests/integration/test_prd2_chaos_drills.py`
+  - Verifies deterministic baseline fallback for timeout/5xx/connection-drop modes
+  - Verifies response safety (`finite`, `[0,1]`, `q10 <= q50 <= q90`)
+  - Verifies circuit breaker opens and short-circuits adapter calls after threshold failures
+- `docs/ops/prd2-chaos-drill.md`
+  - Operator runbook with commands, expected outcomes, and escalation path
+
+### Validation executed
+```bash
+pytest -q tests/integration/test_prd2_chaos_drills.py
+```
+Result: **all tests passed locally**.
+
+## Fixture pack
+- Added reusable PRD2 fixture dataset under `tests/fixtures/prd2/`:
+  - `D1_normal.json`
+  - `D2_jumpy.json`
+  - `D3_illiquid.json`
+  - `D4_failure-template.json`
+- Added loader utilities at `tests/helpers/prd2_fixtures.py` for fixture path/request/expectation/adapter quantile loading.
+- Extended tests to consume fixture pack:
+  - `tests/unit/test_tsfm_runner_service.py` (parameterized fixture scenarios)
+  - `tests/unit/test_api_tsfm_forecast.py` (API contract payload from fixture)
+  - `tests/integration/test_prd2_fixture_scenarios.py` (integration-style scenario coverage)
+- Added ops documentation: `docs/ops/prd2-test-fixtures.md`.

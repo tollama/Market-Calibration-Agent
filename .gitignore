@@ -29,3 +29,6 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Verification artifacts
+artifacts/

@@ -1,0 +1,50 @@
+name: PRD2 Perf Gate
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  prd2-perf-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run deterministic TSFM perf benchmark
+        run: |
+          PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py \
+            --requests 200 \
+            --unique 20 \
+            --adapter-latency-ms 15 \
+            --budget-p95-ms 300 \
+            --budget-cycle-s 60 \
+            | tee prd2-bench.log
+
+      - name: Parse and validate perf output
+        run: |
+          python3 scripts/validate_prd2_perf_bench.py \
+            --input prd2-bench.log \
+            --output prd2-bench-result.json \
+            --p95-threshold-ms 300 \
+            --cycle-threshold-s 60
+
+      - name: Upload perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prd2-perf-gate-artifacts
+          path: |
+            prd2-bench.log
+            prd2-bench-result.json

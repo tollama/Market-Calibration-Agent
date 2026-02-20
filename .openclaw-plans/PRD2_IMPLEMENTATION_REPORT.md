@@ -143,7 +143,59 @@ Observed (cold-ish, no cache reuse):
   - live tests are disabled unless `LIVE_TOLLAMA_TESTS=1`
   - tests skip (not fail) when tollama host:port is unreachable
 
+## Observability & rollout gates
+### Added artifacts
+- `monitoring/prometheus/tsfm_canary_alerts.rules.yaml`
+  - Concrete Prometheus alert rules for:
+    - p95 latency
+    - error rate
+    - fallback rate
+    - breaker-open rate
+    - invalid output rate
+  - Includes explicit rollback-trigger alerts aligned with PRD2 load-test spec.
+- `docs/ops/tsfm-canary-rollout-runbook.md`
+  - Canary promotion flow: `5% -> 25% -> 100%`
+  - Gate windows: `30m -> 60m -> 24h`
+  - Exact immediate rollback triggers (ANY):
+    1) p95 > 400ms for 2 consecutive 5m windows
+    2) error_rate > 2% for any 5m window
+    3) invalid_output_rate > 0
+    4) fallback_rate > 20% for 15m
+    5) breaker_open_rate > 30% for 15m
+- `scripts/evaluate_tsfm_canary_gate.py`
+  - JSON metrics input -> deterministic gate verdict output (`gate_passed`, `rollback_triggered`, reasons)
+  - Exit code: `0` on pass, `2` on fail (CI-friendly)
+- Example inputs:
+  - `scripts/examples/canary_gate_pass.json`
+  - `scripts/examples/canary_gate_fail_rollback.json`
+
+### Smoke validation
+```bash
+python3 scripts/evaluate_tsfm_canary_gate.py --input scripts/examples/canary_gate_pass.json --stage canary_5
+```
+Expected: `gate_passed=true`, `rollback_triggered=false`
+
+```bash
+python3 scripts/evaluate_tsfm_canary_gate.py --input scripts/examples/canary_gate_fail_rollback.json --stage canary_25
+```
+Expected: `gate_passed=false`, `rollback_triggered=true` with rollback reasons.
+
+### Doc wiring updates
+- `README.md` now links canary runbook under Architecture/Notes.
+- `docs/prd2-implementation-status.md` now references monitoring rules, runbook, and evaluator script.
+
 ## Remaining risks / follow-up
 1. **tollama endpoint schema drift risk**: adapter isolates app contract but still requires updates if runtime schema changes.
 2. **Conformal is currently request-time hook**: persistent rolling calibrator job + store can be expanded.
-3. **Observability backend wiring pending**: metadata fields are in place; metrics sink/dashboard integration still needed.
+3. **Observability backend wiring pending**: rules/runbook/evaluator are added; metrics exporter/dashboard integration still needed per environment.
+
+## Perf CI gate
+- Added isolated workflow: `.github/workflows/prd2-perf-gate.yml`.
+- Trigger mode: `push`, `pull_request`, and `workflow_dispatch`.
+- Workflow executes deterministic benchmark via `pipelines/bench_tsfm_runner_perf.py` with strict budgets:
+  - `latency_p95_ms <= 300`
+  - `elapsed_s <= 60`
+- Added helper parser/validator: `scripts/validate_prd2_perf_bench.py`.
+  - Parses benchmark stdout (`key=value`) into normalized JSON.
+  - Validates thresholds and returns non-zero on regression.
+- Added operations doc: `docs/ops/prd2-perf-gate.md` with local run commands and output format.

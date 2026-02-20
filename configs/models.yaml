@@ -1,0 +1,18 @@
+active_model: baseline
+
+models:
+  baseline:
+    family: logistic
+    features:
+      - mid_price
+      - spread
+      - volume_1h
+      - volatility_1h
+    regularization: 0.10
+
+  fallback:
+    family: isotonic
+    features:
+      - mid_price
+      - volume_1h
+    min_samples: 500

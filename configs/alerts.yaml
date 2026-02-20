@@ -1,0 +1,16 @@
+alerts:
+  enabled: true
+  cooldown_seconds: 300
+
+thresholds:
+  mispricing_bps: 75
+  max_drawdown_pct: 8.0
+  min_liquidity_usd: 1000
+
+channels:
+  log:
+    enabled: true
+    level: WARNING
+  webhook:
+    enabled: false
+    url: ""

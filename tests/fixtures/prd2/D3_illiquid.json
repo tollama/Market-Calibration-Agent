@@ -1,0 +1,30 @@
+{
+  "id": "D3_illiquid",
+  "description": "Illiquid market forcing deterministic baseline fallback regardless of adapter availability.",
+  "request": {
+    "market_id": "prd2-d3-illiquid",
+    "as_of_ts": "2026-02-21T00:10:00Z",
+    "freq": "5m",
+    "horizon_steps": 3,
+    "quantiles": [0.1, 0.5, 0.9],
+    "y": [0.07, 0.09, 0.08, 0.1, 0.12, 0.11, 0.1, 0.09, 0.08, 0.09, 0.11, 0.1, 0.09, 0.08, 0.07, 0.08, 0.09, 0.1, 0.11, 0.1, 0.09, 0.08, 0.07, 0.08, 0.09, 0.1, 0.11, 0.1, 0.09, 0.08, 0.07, 0.08],
+    "transform": {"space": "logit", "eps": 1e-6},
+    "model": {"provider": "tollama", "model_name": "chronos", "model_version": "fixture", "params": {}},
+    "liquidity_bucket": "low"
+  },
+  "adapter": {
+    "mode": "ok",
+    "meta": {"runtime": "tollama", "latency_ms": 2.9},
+    "quantiles": {
+      "0.1": [0.1, 0.1, 0.1],
+      "0.5": [0.2, 0.2, 0.2],
+      "0.9": [0.3, 0.3, 0.3]
+    }
+  },
+  "expect": {
+    "runtime": "baseline",
+    "fallback_used": true,
+    "fallback_reason_prefix": "baseline_only_liquidity_bucket",
+    "warnings_include": ["fallback_reason=baseline_only_liquidity_bucket"]
+  }
+}

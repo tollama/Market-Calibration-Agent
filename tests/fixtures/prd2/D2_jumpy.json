@@ -1,0 +1,29 @@
+{
+  "id": "D2_jumpy",
+  "description": "Jumpy quantiles that require clipping and crossing fix while staying on tollama runtime.",
+  "request": {
+    "market_id": "prd2-d2-jumpy",
+    "as_of_ts": "2026-02-21T00:05:00Z",
+    "freq": "5m",
+    "horizon_steps": 3,
+    "quantiles": [0.1, 0.5, 0.9],
+    "y": [0.32, 0.35, 0.31, 0.36, 0.4, 0.38, 0.42, 0.37, 0.43, 0.39, 0.45, 0.41, 0.46, 0.4, 0.47, 0.42, 0.48, 0.41, 0.49, 0.43, 0.5, 0.44, 0.51, 0.45, 0.52, 0.46, 0.5, 0.47, 0.49, 0.46, 0.48, 0.45],
+    "transform": {"space": "logit", "eps": 1e-6},
+    "model": {"provider": "tollama", "model_name": "chronos", "model_version": "fixture", "params": {}},
+    "liquidity_bucket": "high"
+  },
+  "adapter": {
+    "mode": "ok",
+    "meta": {"runtime": "tollama", "latency_ms": 3.1},
+    "quantiles": {
+      "0.1": [1.2, -0.5, 0.8],
+      "0.5": [0.1, 0.3, -0.2],
+      "0.9": [-0.1, 0.2, 0.9]
+    }
+  },
+  "expect": {
+    "runtime": "tollama",
+    "fallback_used": false,
+    "warnings_include": ["quantile_crossing_fixed"]
+  }
+}

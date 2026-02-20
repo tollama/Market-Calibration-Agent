@@ -326,6 +326,7 @@ pytest -q tests/integration/test_prd2_chaos_drills.py
 Result: **all tests passed locally**.
 
 ## Fixture pack
+- Refreshed fixture pack with reusable scenario datasets and loader-backed tests (commit `499b966`).
 - Added reusable PRD2 fixture dataset under `tests/fixtures/prd2/`:
   - `D1_normal.json`
   - `D2_jumpy.json`

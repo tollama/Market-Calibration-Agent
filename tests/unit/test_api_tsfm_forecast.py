@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 import importlib
 
 from api.app import app
+from tests.helpers.prd2_fixtures import fixture_request
 
 app_module = importlib.import_module("api.app")
 
@@ -26,23 +27,13 @@ def test_post_tsfm_forecast_contract(monkeypatch) -> None:
     monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
     client = TestClient(app)
 
-    response = client.post(
-        "/tsfm/forecast",
-        json={
-            "market_id": "m-1",
-            "as_of_ts": "2026-02-20T00:00:00Z",
-            "freq": "5m",
-            "horizon_steps": 2,
-            "quantiles": [0.1, 0.5, 0.9],
-            "y": [0.4, 0.5, 0.55, 0.56],
-            "x_past": {},
-            "x_future": {},
-            "transform": {"space": "logit", "eps": 1e-6},
-            "model": {"provider": "tollama", "model_name": "chronos", "params": {}},
-        },
-    )
+    payload = fixture_request("D1_normal")
+    payload["x_past"] = {}
+    payload["x_future"] = {}
+
+    response = client.post("/tsfm/forecast", json=payload)
 
     assert response.status_code == 200
     body = response.json()
-    assert body["market_id"] == "m-1"
+    assert body["market_id"] == "prd2-d1-normal"
     assert set(body["yhat_q"]) == {"0.1", "0.5", "0.9"}

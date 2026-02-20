@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from runners.tollama_adapter import TollamaError
-from runners.tsfm_service import TSFMRunnerService
+from runners.tsfm_service import TSFMRunnerService, TSFMServiceConfig
 
 
 class _FakeAdapter:
@@ -15,6 +15,16 @@ class _FakeAdapter:
         if self._fail:
             raise TollamaError("down")
         return self._quantiles, {"runtime": "tollama", "latency_ms": 1.0}
+
+
+class _FlakyAdapter:
+    def __init__(self):
+        self.fail = False
+
+    def forecast(self, **_: object):
+        if self.fail:
+            raise TollamaError("down")
+        return {0.1: [0.2, 0.3], 0.5: [0.4, 0.5], 0.9: [0.6, 0.7]}, {"runtime": "tollama"}
 
 
 def _request() -> dict[str, object]:
@@ -74,21 +84,54 @@ def test_tsfm_service_cache_hit_sets_meta_flag() -> None:
 
     assert first["meta"]["cache_hit"] is False
     assert second["meta"]["cache_hit"] is True
+    assert second["meta"]["cache_stale"] is False
 
 
-def test_tsfm_service_circuit_breaker_opens_after_consecutive_failures() -> None:
-    service = TSFMRunnerService(adapter=_FakeAdapter(fail=True))
+def test_tsfm_service_stale_if_error_uses_expired_cache() -> None:
+    adapter = _FlakyAdapter()
+    service = TSFMRunnerService(
+        adapter=adapter,
+        config=TSFMServiceConfig(cache_ttl_s=0, cache_stale_if_error_s=30),
+    )
     req = _request()
 
+    first = service.forecast(req)
+    assert first["meta"]["fallback_used"] is False
+
+    adapter.fail = True
+    second = service.forecast(req)
+
+    assert second["meta"]["fallback_used"] is True
+    assert second["meta"]["fallback_reason"] == "stale_if_error"
+    assert second["meta"]["cache_hit"] is True
+    assert second["meta"]["cache_stale"] is True
+
+
+def test_tsfm_service_circuit_breaker_opens_and_recovers_via_half_open_probes() -> None:
+    adapter = _FlakyAdapter()
+    config = TSFMServiceConfig(
+        circuit_breaker_window_s=120,
+        circuit_breaker_min_requests=3,
+        circuit_breaker_failure_rate_to_open=1.0,
+        circuit_breaker_cooldown_s=0,
+        circuit_breaker_half_open_probe_requests=2,
+        circuit_breaker_half_open_successes_to_close=2,
+    )
+    service = TSFMRunnerService(adapter=adapter, config=config)
+    req = _request()
+
+    adapter.fail = True
     service.forecast(req)
     service.forecast({**req, "as_of_ts": "2026-02-20T00:05:00Z"})
-    service.forecast({**req, "as_of_ts": "2026-02-20T00:10:00Z"})
-    service.forecast({**req, "as_of_ts": "2026-02-20T00:15:00Z"})
-    service.forecast({**req, "as_of_ts": "2026-02-20T00:20:00Z"})
-    response = service.forecast({**req, "as_of_ts": "2026-02-20T00:25:00Z"})
+    opened = service.forecast({**req, "as_of_ts": "2026-02-20T00:10:00Z"})
+    assert opened["meta"]["circuit_breaker_state"] == "open"
 
-    assert response["meta"]["fallback_used"] is True
-    assert any("circuit_breaker_open" in w for w in response["meta"]["warnings"])
+    adapter.fail = False
+    probe_1 = service.forecast({**req, "as_of_ts": "2026-02-20T00:15:00Z"})
+    assert probe_1["meta"]["runtime"] == "tollama"
+
+    probe_2 = service.forecast({**req, "as_of_ts": "2026-02-20T00:20:00Z"})
+    assert probe_2["meta"]["circuit_breaker_state"] == "closed"
 
 
 def test_tsfm_service_fallbacks_on_invalid_adapter_shape() -> None:
@@ -109,3 +152,52 @@ def test_tsfm_service_reverts_to_default_quantiles_when_unsupported_requested() 
 
     assert response["quantiles"] == [0.1, 0.5, 0.9]
     assert "unsupported_quantiles_requested;using_default" in response["meta"]["warnings"]
+
+
+def test_tsfm_service_fast_gate_max_gap_before_tollama() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+    req = {
+        **_request(),
+        "y_ts": [
+            "2026-02-20T00:00:00Z",
+            "2026-02-20T00:05:00Z",
+            "2026-02-20T03:00:00Z",
+        ],
+    }
+
+    response = service.forecast(req)
+
+    assert response["meta"]["runtime"] == "baseline"
+    assert response["meta"]["fallback_reason"] == "max_gap_exceeded"
+
+
+def test_tsfm_service_degradation_state_machine_is_deterministic() -> None:
+    adapter = _FlakyAdapter()
+    config = TSFMServiceConfig(
+        degradation_window_s=600,
+        degradation_min_requests=4,
+        degraded_enter_failure_rate=0.25,
+        baseline_only_enter_failure_rate=0.5,
+        degraded_exit_failure_rate=0.10,
+        baseline_only_exit_failure_rate=0.20,
+        circuit_breaker_min_requests=100,
+    )
+    service = TSFMRunnerService(adapter=adapter, config=config)
+    req = _request()
+
+    adapter.fail = True
+    service.forecast(req)
+    service.forecast({**req, "as_of_ts": "2026-02-20T00:05:00Z"})
+    state3 = service.forecast({**req, "as_of_ts": "2026-02-20T00:10:00Z"})
+    assert state3["meta"]["degradation_state"] == "normal"
+
+    state4 = service.forecast({**req, "as_of_ts": "2026-02-20T00:15:00Z"})
+    assert state4["meta"]["degradation_state"] == "baseline-only"
+
+    adapter.fail = False
+    recovered = service.forecast({**req, "as_of_ts": "2026-02-20T00:20:00Z"})
+    assert recovered["meta"]["degradation_state"] in {"baseline-only", "degraded"}
+
+    for i in range(10):
+        res = service.forecast({**req, "as_of_ts": f"2026-02-20T00:{25 + i:02d}:00Z"})
+    assert res["meta"]["degradation_state"] in {"degraded", "normal"}

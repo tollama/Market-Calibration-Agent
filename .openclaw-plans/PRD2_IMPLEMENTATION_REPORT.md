@@ -240,6 +240,58 @@ Expected: `gate_passed=false`, `rollback_triggered=true` with rollback reasons.
 - Current status verification command:
   - `python3 scripts/prd2_release_audit.py`
 
+## Python runtime gate (3.11+) for PRD2 release checks
+Addressed false-fail class caused by interpreter mismatch (`python3` resolving to <3.11 in some environments):
+
+- Updated package runtime requirement in `pyproject.toml`:
+  - `requires-python` from `>=3.10` -> `>=3.11`
+- Hardened release auditor `scripts/prd2_release_audit.py`:
+  - Added explicit runtime precheck (`Python >=3.11`) before gate execution.
+  - Added consistent interpreter selection via `--python-bin` / `PYTHON_BIN`.
+  - Added actionable failure messages (binary missing / version too old + quick fix command).
+  - Added command rendering support for `{PYTHON_BIN}` placeholder in checklist commands.
+- Updated release checklist `docs/ops/prd2-release-checklist.yaml`:
+  - Added explicit blocker `RB-000` (Python runtime 3.11+).
+  - Switched all Python command checks from hardcoded `python3` to `{PYTHON_BIN}`.
+- Updated one-command verifier `scripts/prd2_verify_all.sh`:
+  - Release-audit stage now executes `scripts/prd2_release_audit.py` with the same selected interpreter (`PRD2_VERIFY_PYTHON_BIN`).
+- Updated operator docs:
+  - `docs/ops/prd2-release-audit.md`
+  - `docs/ops/prd2-verify-all.md`
+  - Included Python version requirement and quick-fix examples.
+
+### Runtime-gate demonstration (current env)
+`python3` in current environment resolves to 3.9, so the precheck fails fast with a clear fix:
+
+```bash
+python3 scripts/prd2_release_audit.py --skip-commands
+```
+
+Observed output:
+
+```text
+Python runtime precheck failed.
+Python runtime too old: python3 resolved to 3.9; PRD2 release audit requires >= 3.11 (StrEnum-dependent codepath).
+Quick fix:
+  1) Install Python 3.11+
+  2) Run with explicit interpreter:
+     PYTHON_BIN=python3.11 python3 scripts/prd2_release_audit.py
+```
+
+Validation with explicit interpreter:
+
+```bash
+PYTHON_BIN=python3.11 python3 scripts/prd2_release_audit.py --skip-commands
+```
+
+Observed output (excerpt):
+
+```text
+Using Python runtime: python3.11 (3.11)
+PRD2 Release Audit: PASS
+- python_bin=python3.11
+```
+
 ## Dashboard pack
 Added static Grafana observability artifacts for PRD2 under `monitoring/grafana/`:
 - `prd2-observability-dashboard.json`

@@ -2,6 +2,12 @@ version: 1
 name: PRD2 Release Readiness Checklist
 description: Machine-readable checklist for PRD2 release blockers and P1 quality gates.
 release_blockers:
+  - id: RB-000
+    title: Python runtime is 3.11+ (StrEnum-compatible)
+    severity: blocker
+    type: command
+    command: "{PYTHON_BIN} -c \"import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)\""
+    timeout_s: 30
   - id: RB-001
     title: TSFM forecast API contract implemented
     severity: blocker
@@ -51,13 +57,13 @@ release_blockers:
     title: PRD2 unit/API gate passes
     severity: blocker
     type: command
-    command: python3 -m pytest tests/unit/test_tsfm_runner_service.py tests/unit/test_api_tsfm_forecast.py tests/unit/test_tsfm_model_license_guard.py tests/unit/test_tsfm_perf_smoke.py
+    command: "{PYTHON_BIN} -m pytest tests/unit/test_tsfm_runner_service.py tests/unit/test_api_tsfm_forecast.py tests/unit/test_tsfm_model_license_guard.py tests/unit/test_tsfm_perf_smoke.py"
     timeout_s: 240
   - id: RB-011
     title: Perf smoke SLO gate passes
     severity: blocker
     type: command
-    command: PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 60 --unique 20 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60
+    command: "PYTHONPATH=. {PYTHON_BIN} pipelines/bench_tsfm_runner_perf.py --requests 60 --unique 20 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60"
     timeout_s: 240
 
 p1_items:
@@ -85,7 +91,7 @@ p1_items:
     title: Live integration tests are runnable (may skip if env not configured)
     severity: p1
     type: command
-    command: python3 -m pytest tests/integration/test_tollama_live_integration.py -q
+    command: "{PYTHON_BIN} -m pytest tests/integration/test_tollama_live_integration.py -q"
     timeout_s: 240
 
 metadata:
@@ -94,3 +100,4 @@ metadata:
   notes:
     - Blockers must all pass for release readiness.
     - P1 items should pass; skipped integration checks are treated as pass with warning by policy in audit script.
+    - Use {PYTHON_BIN} placeholder for all Python command checks to enforce interpreter consistency.

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
 import time
@@ -17,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+MIN_PYTHON = (3, 11)
 
 
 @dataclass
@@ -82,7 +86,17 @@ def _check_file(root: Path, check: dict[str, Any]) -> CheckResult:
     )
 
 
-def _check_command(root: Path, check: dict[str, Any], skip_commands: bool) -> CheckResult:
+def _render_command(cmd: str, python_bin: str) -> str:
+    rendered = cmd.replace("{PYTHON_BIN}", python_bin)
+    return rendered
+
+
+def _check_command(
+    root: Path,
+    check: dict[str, Any],
+    skip_commands: bool,
+    python_bin: str,
+) -> CheckResult:
     cmd = check.get("command")
     cid = str(check.get("id", "UNKNOWN"))
     title = str(check.get("title", ""))
@@ -99,6 +113,8 @@ def _check_command(root: Path, check: dict[str, Any], skip_commands: bool) -> Ch
             detail="missing `command` field",
         )
 
+    rendered_cmd = _render_command(str(cmd), python_bin=python_bin)
+
     if skip_commands:
         return CheckResult(
             check_id=cid,
@@ -108,18 +124,22 @@ def _check_command(root: Path, check: dict[str, Any], skip_commands: bool) -> Ch
             ok=True,
             status="SKIP",
             detail="command execution skipped by --skip-commands",
-            command=str(cmd),
+            command=rendered_cmd,
         )
 
     timeout_s = int(check.get("timeout_s", 180))
     started = time.time()
+    env = os.environ.copy()
+    env["PYTHON_BIN"] = python_bin
+
     proc = subprocess.run(
-        str(cmd),
+        rendered_cmd,
         cwd=str(root),
         shell=True,
         capture_output=True,
         text=True,
         timeout=timeout_s,
+        env=env,
     )
     elapsed = time.time() - started
 
@@ -132,7 +152,7 @@ def _check_command(root: Path, check: dict[str, Any], skip_commands: bool) -> Ch
     status = "PASS" if ok else "FAIL"
 
     # Policy: integration live tests may skip due to env; treat as warning/pass.
-    if (not ok) and "test_tollama_live_integration.py" in str(cmd):
+    if (not ok) and "test_tollama_live_integration.py" in rendered_cmd:
         text = combined.lower()
         if "skipped" in text or "no tests ran" in text:
             ok = True
@@ -146,13 +166,67 @@ def _check_command(root: Path, check: dict[str, Any], skip_commands: bool) -> Ch
         ok=ok,
         status=status,
         detail=snippet,
-        command=str(cmd),
+        command=rendered_cmd,
         duration_s=elapsed,
         returncode=proc.returncode,
     )
 
 
-def run_audit(checklist_path: Path, repo_root: Path, skip_commands: bool) -> dict[str, Any]:
+def _python_version_str(v: tuple[int, int]) -> str:
+    return f"{v[0]}.{v[1]}"
+
+
+def _validate_python_runtime(python_bin: str) -> tuple[bool, str]:
+    resolved = shutil.which(python_bin)
+    if not resolved:
+        return (
+            False,
+            (
+                f"Python binary not found: {python_bin}\n"
+                "Quick fix: set PYTHON_BIN (or --python-bin) to a Python 3.11+ interpreter, e.g.\n"
+                "  PYTHON_BIN=python3.11 python3 scripts/prd2_release_audit.py"
+            ),
+        )
+
+    proc = subprocess.run(
+        [python_bin, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return (
+            False,
+            (
+                f"Failed to probe Python runtime using {python_bin} (exit={proc.returncode}).\n"
+                "Quick fix: verify interpreter path and retry with PYTHON_BIN=python3.11."
+            ),
+        )
+
+    detected = (proc.stdout or "").strip()
+    major_minor = tuple(int(p) for p in detected.split(".")[:2])
+    if major_minor < MIN_PYTHON:
+        req = _python_version_str(MIN_PYTHON)
+        return (
+            False,
+            (
+                f"Python runtime too old: {python_bin} resolved to {detected}; PRD2 release audit requires >= {req} "
+                "(StrEnum-dependent codepath).\n"
+                "Quick fix:\n"
+                "  1) Install Python 3.11+\n"
+                "  2) Run with explicit interpreter:\n"
+                "     PYTHON_BIN=python3.11 python3 scripts/prd2_release_audit.py"
+            ),
+        )
+
+    return True, f"Using Python runtime: {python_bin} ({detected})"
+
+
+def run_audit(
+    checklist_path: Path,
+    repo_root: Path,
+    skip_commands: bool,
+    python_bin: str,
+) -> dict[str, Any]:
     cfg = _load_yaml(checklist_path)
     checks = _iter_checks(cfg)
 
@@ -162,7 +236,14 @@ def run_audit(checklist_path: Path, repo_root: Path, skip_commands: bool) -> dic
         if ctype == "file":
             results.append(_check_file(repo_root, check))
         elif ctype == "command":
-            results.append(_check_command(repo_root, check, skip_commands=skip_commands))
+            results.append(
+                _check_command(
+                    repo_root,
+                    check,
+                    skip_commands=skip_commands,
+                    python_bin=python_bin,
+                )
+            )
         else:
             results.append(
                 CheckResult(
@@ -200,6 +281,7 @@ def run_audit(checklist_path: Path, repo_root: Path, skip_commands: bool) -> dic
         "timestamp": int(time.time()),
         "checklist": str(checklist_path),
         "repo_root": str(repo_root),
+        "python_bin": python_bin,
         "summary": {
             "overall": "PASS" if overall_ok else "FAIL",
             "blockers": "PASS" if blockers_ok else "FAIL",
@@ -232,6 +314,7 @@ def run_audit(checklist_path: Path, repo_root: Path, skip_commands: bool) -> dic
 def print_human(report: dict[str, Any]) -> None:
     s = report["summary"]
     print(f"PRD2 Release Audit: {s['overall']}")
+    print(f"- python_bin={report.get('python_bin')}")
     print(
         f"- blockers={s['blockers']} p1={s['p1']} "
         f"(total={s['total_checks']} pass={s['passed']} warn={s['warnings']} fail={s['failed']} skip={s['skipped']})"
@@ -262,6 +345,11 @@ def parse_args() -> argparse.Namespace:
         help="Skip command execution checks",
     )
     parser.add_argument(
+        "--python-bin",
+        default=os.environ.get("PYTHON_BIN", "python3"),
+        help="Python interpreter used for command checks (default: PYTHON_BIN env or python3)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON report to stdout",
@@ -278,11 +366,19 @@ def main() -> int:
         print(f"Checklist not found: {checklist_path}", file=sys.stderr)
         return 2
 
+    ok, message = _validate_python_runtime(args.python_bin)
+    if not ok:
+        print(f"Python runtime precheck failed.\n{message}", file=sys.stderr)
+        return 2
+
+    print(message, file=sys.stderr)
+
     try:
         report = run_audit(
             checklist_path=checklist_path,
             repo_root=repo_root,
             skip_commands=args.skip_commands,
+            python_bin=args.python_bin,
         )
     except subprocess.TimeoutExpired as exc:
         print(f"Command timeout: {exc}", file=sys.stderr)

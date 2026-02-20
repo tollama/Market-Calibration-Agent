@@ -88,7 +88,7 @@ run_step() {
 run_step "PRD2 unit selection" "${PYTHON_BIN} -m pytest -q tests/unit/test_tsfm_runner_service.py tests/unit/test_tsfm_perf_smoke.py tests/unit/test_api_tsfm_forecast.py tests/unit/test_tsfm_model_license_guard.py tests/unit/test_baseline_bands.py tests/unit/test_tsfm_base_contract.py" 1
 run_step "PRD2 integration selection" "${PYTHON_BIN} -m pytest -q tests/integration/test_tollama_live_integration.py" 2
 run_step "PRD2 performance benchmark" "PYTHONPATH=. ${PYTHON_BIN} pipelines/bench_tsfm_runner_perf.py --requests 200 --unique 20 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60" 3
-run_step "PRD2 release audit" "${PYTHON_BIN} -c \"from pathlib import Path; import yaml; [yaml.safe_load(p.read_text()) for p in Path('configs').glob('*.yaml')]; print('Config load OK')\" && ${PYTHON_BIN} -m pytest -q tests/unit/test_tsfm_model_license_guard.py" 4
+run_step "PRD2 release audit" "PYTHON_BIN=${PYTHON_BIN} ${PYTHON_BIN} scripts/prd2_release_audit.py --python-bin ${PYTHON_BIN}" 4
 
 END_EPOCH="$(date +%s)"
 END_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"

@@ -3,6 +3,16 @@
 ## 목적
 `PRD2` 릴리스 전 필수 검증(유닛/통합 선택, 성능 벤치, 릴리스 감사)을 한 번에 고정 순서로 실행합니다.
 
+## Python 런타임 요구사항
+- 최소 버전: **Python 3.11+**
+- 기본 인터프리터: `PRD2_VERIFY_PYTHON_BIN` (기본값 `python3`)
+
+기본 `python3`가 3.11 미만이면 아래처럼 명시 실행하세요.
+
+```bash
+PRD2_VERIFY_PYTHON_BIN=python3.11 scripts/prd2_verify_all.sh
+```
+
 ## 엔트리포인트
 ```bash
 scripts/prd2_verify_all.sh
@@ -13,6 +23,8 @@ scripts/prd2_verify_all.sh
 2. PRD2 integration selection
 3. PRD2 performance benchmark
 4. PRD2 release audit
+
+> 4단계 release audit는 동일한 `PRD2_VERIFY_PYTHON_BIN`으로 `scripts/prd2_release_audit.py`를 실행합니다.
 
 ## 출력 아티팩트
 - 요약 JSON: `artifacts/prd2_verify_summary.json`
@@ -38,13 +50,14 @@ PRD2_VERIFY_DRY_RUN=1 scripts/prd2_verify_all.sh
 실패 시:
 - 스크립트는 non-zero exit code로 종료합니다.
 - 실패 단계는 summary JSON과 해당 step 로그에서 확인합니다.
+- Python 버전 불일치 시 스크립트 시작 단계에서 즉시 실패하고, `python3.11` 지정 방법을 안내합니다.
 
 ## CI usage
 GitHub Actions 등에서 아래처럼 실행합니다.
 
 ```bash
 pip install -e .[dev]
-scripts/prd2_verify_all.sh
+PRD2_VERIFY_PYTHON_BIN=python3.11 scripts/prd2_verify_all.sh
 ```
 
 CI 업로드 권장 아티팩트:

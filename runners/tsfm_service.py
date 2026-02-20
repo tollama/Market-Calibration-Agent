@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import time
 from collections import deque
@@ -17,6 +18,9 @@ from calibration.conformal import ConformalAdjustment, apply_conformal_adjustmen
 from calibration.conformal_state import load_conformal_adjustment
 from runners.baselines import forecast_baseline_band
 from runners.tollama_adapter import TollamaAdapter, TollamaConfig
+from runners.tsfm_observability import TSFMMetricsEmitter
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_freq_to_seconds(freq: str) -> int:
@@ -111,6 +115,7 @@ class TSFMServiceConfig:
 
     cache_ttl_s: int = 60
     cache_stale_if_error_s: int = 120
+    cache_max_entries: int = 50000
 
     circuit_breaker_window_s: int = 300
     circuit_breaker_min_requests: int = 5
@@ -127,6 +132,8 @@ class TSFMServiceConfig:
     baseline_only_exit_failure_rate: float = 0.25
     degradation_probe_every_n_requests: int = 1
     conformal_state_path: str = "data/derived/calibration/conformal_state.json"
+    rollout_stage: str = "unknown"
+    target_coverage: float = 0.9
 
 
 class TSFMRunnerService:
@@ -136,6 +143,7 @@ class TSFMRunnerService:
         adapter: TollamaAdapter | None = None,
         config: TSFMServiceConfig | None = None,
         conformal_adjustment: ConformalAdjustment | None = None,
+        metrics_emitter: TSFMMetricsEmitter | None = None,
     ) -> None:
         self.adapter = adapter or TollamaAdapter(TollamaConfig())
         self.config = config or TSFMServiceConfig()
@@ -149,6 +157,7 @@ class TSFMRunnerService:
             except Exception:  # noqa: BLE001
                 self.conformal_adjustment = None
                 self._conformal_loaded_from_state = False
+        self.metrics_emitter = metrics_emitter or TSFMMetricsEmitter()
         self._cache: dict[str, tuple[float, float, dict[str, Any]]] = {}
         self._breaker_state = CircuitState.CLOSED
         self._breaker_open_until = 0.0
@@ -157,6 +166,15 @@ class TSFMRunnerService:
         self._events: deque[tuple[float, bool]] = deque()
         self._degradation_state = DegradationState.NORMAL
         self._degradation_probe_counter = 0
+        self._obs_counters: dict[str, int] = {
+            "requests_total": 0,
+            "fallback_total": 0,
+            "tollama_error_total": 0,
+            "cache_hit_total": 0,
+            "cache_stale_total": 0,
+            "quantile_crossing_fixed_total": 0,
+        }
+        self._obs_latencies_ms: deque[float] = deque(maxlen=4096)
 
     @classmethod
     def from_runtime_config(
@@ -196,6 +214,7 @@ class TSFMRunnerService:
             baseline_only_liquidity=str(fallback.get("baseline_only_liquidity_bucket", "low")),
             cache_ttl_s=int(cache.get("ttl_s", 60)),
             cache_stale_if_error_s=int(cache.get("stale_if_error_s", cache.get("stale_while_revalidate_s", 120))),
+            cache_max_entries=int(cache.get("max_entries", 50000)),
             circuit_breaker_window_s=int(circuit.get("window_s", 300)),
             circuit_breaker_min_requests=int(circuit.get("min_requests", 5)),
             circuit_breaker_failure_rate_to_open=float(circuit.get("failure_rate_to_open", 1.0)),
@@ -210,7 +229,26 @@ class TSFMRunnerService:
             baseline_only_exit_failure_rate=float(degradation.get("baseline_only_exit_failure_rate", 0.25)),
             degradation_probe_every_n_requests=int(degradation.get("probe_every_n_requests", 1)),
             conformal_state_path=str(conformal.get("state_path", "data/derived/calibration/conformal_state.json")),
+            rollout_stage=str(tsfm.get("rollout_stage", "unknown")),
+            target_coverage=float(conformal.get("target_coverage", 0.9)),
         )
+        if adapter is None:
+            adapter_raw = tsfm.get("adapter") or {}
+            backoff_ms = float(adapter_raw.get("retry_backoff_ms", 120.0))
+            jitter_ms = float(adapter_raw.get("retry_jitter_ms", 80.0))
+            adapter_config = TollamaConfig(
+                base_url=str(adapter_raw.get("base_url", TollamaConfig.base_url)),
+                endpoint=str(adapter_raw.get("endpoint", TollamaConfig.endpoint)),
+                timeout_s=float(adapter_raw.get("timeout_s", 2.0)),
+                retry_count=int(adapter_raw.get("retry_count", 1)),
+                retry_backoff_base_s=float(adapter_raw.get("retry_backoff_base_s", backoff_ms / 1000.0)),
+                retry_backoff_cap_s=float(adapter_raw.get("retry_backoff_cap_s", 0.8)),
+                retry_jitter_s=float(adapter_raw.get("retry_jitter_s", jitter_ms / 1000.0)),
+                token=adapter_raw.get("token"),
+                max_connections=int(adapter_raw.get("max_connections", 200)),
+                max_keepalive_connections=int(adapter_raw.get("max_keepalive_connections", 50)),
+            )
+            adapter = TollamaAdapter(adapter_config)
         return cls(adapter=adapter, config=config, conformal_adjustment=conformal_adjustment)
 
     def _cache_key(self, request: Mapping[str, Any]) -> str:
@@ -247,6 +285,9 @@ class TSFMRunnerService:
 
     def _write_cache(self, key: str, value: dict[str, Any]) -> None:
         now = time.time()
+        max_entries = max(int(self.config.cache_max_entries), 1)
+        if len(self._cache) >= max_entries:
+            self._cache.pop(next(iter(self._cache)))
         self._cache[key] = (
             now + self.config.cache_ttl_s,
             now + self.config.cache_ttl_s + self.config.cache_stale_if_error_s,
@@ -371,7 +412,15 @@ class TSFMRunnerService:
 
         self._update_degradation_state(now=now)
 
+    def render_prometheus_metrics(self) -> str:
+        return self.metrics_emitter.render_prometheus()
+
     def forecast(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        rollout_stage = str(request.get("rollout_stage") or self.config.rollout_stage)
+        bucket = str(request.get("liquidity_bucket") or "unknown")
+        self.metrics_emitter.set_gauge("tsfm_target_coverage", self.config.target_coverage, rollout_stage=rollout_stage, bucket=bucket)
+
         cache_key = self._cache_key(request)
         cached = self._read_cache(cache_key)
         if cached is not None:
@@ -380,6 +429,10 @@ class TSFMRunnerService:
             cached_meta["cache_hit"] = True
             cached_meta["cache_stale"] = False
             cached_value["meta"] = cached_meta
+            self.metrics_emitter.inc("tsfm_cache_hit_total", rollout_stage=rollout_stage)
+            self.metrics_emitter.inc("tsfm_request_total", rollout_stage=rollout_stage, status="success")
+            self.metrics_emitter.observe_request_latency_ms((time.perf_counter() - started) * 1000.0, rollout_stage=rollout_stage)
+            self.metrics_emitter.observe_cycle_time_s(time.perf_counter() - started, market_id=str(request.get("market_id") or "unknown"))
             return cached_value
 
         market_id = str(request["market_id"])
@@ -477,6 +530,11 @@ class TSFMRunnerService:
                     stale_meta["circuit_breaker_state"] = self._breaker_state
                     stale_meta["degradation_state"] = self._degradation_state
                     stale_value["meta"] = stale_meta
+                    self.metrics_emitter.inc("tsfm_cache_hit_total", rollout_stage=rollout_stage)
+                    self.metrics_emitter.inc("tsfm_fallback_total", rollout_stage=rollout_stage, reason="stale_if_error")
+                    self.metrics_emitter.inc("tsfm_request_total", rollout_stage=rollout_stage, status="success")
+                    self.metrics_emitter.observe_request_latency_ms((time.perf_counter() - started) * 1000.0, rollout_stage=rollout_stage)
+                    self.metrics_emitter.observe_cycle_time_s(time.perf_counter() - started, market_id=market_id)
                     return stale_value
                 fallback_reason = f"tollama_error:{exc}"
 
@@ -510,6 +568,7 @@ class TSFMRunnerService:
         quantile_paths, had_crossing = _fix_quantile_crossing(quantile_paths)
         if had_crossing:
             warnings.append("quantile_crossing_fixed")
+            self.metrics_emitter.inc("tsfm_quantile_crossing_total", rollout_stage=rollout_stage)
 
         lower = quantile_paths.get(0.1)
         upper = quantile_paths.get(0.9)
@@ -530,6 +589,21 @@ class TSFMRunnerService:
         meta["circuit_breaker_state"] = self._breaker_state
         meta["degradation_state"] = self._degradation_state
 
+        if lower and upper:
+            avg_width = sum((u - l) for l, u in zip(lower, upper)) / max(len(lower), 1)
+            self.metrics_emitter.set_gauge("tsfm_interval_width", avg_width, rollout_stage=rollout_stage, bucket=bucket)
+
+        invalid_output = False
+        for idx in range(horizon_steps):
+            q10 = quantile_paths[0.1][idx]
+            q50 = quantile_paths[0.5][idx]
+            q90 = quantile_paths[0.9][idx]
+            if not (0.0 <= q10 <= q50 <= q90 <= 1.0):
+                invalid_output = True
+                break
+        if invalid_output:
+            self.metrics_emitter.inc("tsfm_invalid_output_total", rollout_stage=rollout_stage)
+
         response = {
             "market_id": market_id,
             "as_of_ts": as_of_ts,
@@ -548,6 +622,15 @@ class TSFMRunnerService:
             }
             adjusted = apply_conformal_adjustment(last_band, self.conformal_adjustment)
             response["conformal_last_step"] = adjusted
+
+        if meta.get("fallback_used"):
+            self.metrics_emitter.inc("tsfm_fallback_total", rollout_stage=rollout_stage, reason=str(meta.get("fallback_reason") or "unknown"))
+        if str(self._breaker_state) == str(CircuitState.OPEN):
+            self.metrics_emitter.inc("tsfm_breaker_open_total", rollout_stage=rollout_stage)
+
+        self.metrics_emitter.inc("tsfm_request_total", rollout_stage=rollout_stage, status="success")
+        self.metrics_emitter.observe_request_latency_ms((time.perf_counter() - started) * 1000.0, rollout_stage=rollout_stage)
+        self.metrics_emitter.observe_cycle_time_s(time.perf_counter() - started, market_id=market_id)
 
         self._write_cache(cache_key, response)
         return response

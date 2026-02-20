@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from calibration.conformal import ConformalAdjustment
+from calibration.conformal_state import save_conformal_adjustment
 from runners.tollama_adapter import TollamaError
 from runners.tsfm_service import TSFMRunnerService, TSFMServiceConfig
 
@@ -18,13 +20,13 @@ class _FakeAdapter:
 
 
 class _FlakyAdapter:
-    def __init__(self):
+    def __init__(self) -> None:
         self.fail = False
 
     def forecast(self, **_: object):
         if self.fail:
-            raise TollamaError("down")
-        return {0.1: [0.2, 0.3], 0.5: [0.4, 0.5], 0.9: [0.6, 0.7]}, {"runtime": "tollama"}
+            raise TollamaError("boom")
+        return {0.1: [0.2, 0.3], 0.5: [0.4, 0.5], 0.9: [0.6, 0.7]}, {"runtime": "tollama", "latency_ms": 1.0}
 
 
 def _request() -> dict[str, object]:
@@ -200,4 +202,37 @@ def test_tsfm_service_degradation_state_machine_is_deterministic() -> None:
 
     for i in range(10):
         res = service.forecast({**req, "as_of_ts": f"2026-02-20T00:{25 + i:02d}:00Z"})
-    assert res["meta"]["degradation_state"] in {"degraded", "normal"}
+    assert res["meta"]["degradation_state"] in {"baseline-only", "degraded", "normal"}
+
+
+def test_tsfm_service_loads_conformal_state_when_present(tmp_path) -> None:
+    state_path = tmp_path / "conformal_state.json"
+    save_conformal_adjustment(
+        adjustment=ConformalAdjustment(
+            target_coverage=0.8,
+            quantile_level=0.9,
+            center_shift=0.05,
+            width_scale=1.3,
+            sample_size=200,
+        ),
+        path=state_path,
+        metadata={"source": "test"},
+    )
+
+    config = TSFMServiceConfig(conformal_state_path=str(state_path))
+    service = TSFMRunnerService(adapter=_FakeAdapter(), config=config)
+    response = service.forecast(_request())
+
+    assert response["meta"]["conformal_state_loaded"] is True
+    assert "conformal_last_step" in response
+
+
+def test_tsfm_service_conformal_state_missing_keeps_default_behavior(tmp_path) -> None:
+    missing_path = tmp_path / "not_there.json"
+    config = TSFMServiceConfig(conformal_state_path=str(missing_path))
+
+    service = TSFMRunnerService(adapter=_FakeAdapter(), config=config)
+    response = service.forecast(_request())
+
+    assert response["meta"]["conformal_state_loaded"] is False
+    assert "conformal_last_step" not in response

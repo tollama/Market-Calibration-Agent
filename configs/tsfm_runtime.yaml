@@ -20,10 +20,22 @@ tsfm:
   cache:
     ttl_s: 60
     max_entries: 50000
-    stale_while_revalidate_s: 20
+    stale_if_error_s: 120
   circuit_breaker:
-    failures_to_open: 5
+    window_s: 300
+    min_requests: 5
+    failure_rate_to_open: 1.0
     cooldown_s: 120
+    half_open_probe_requests: 2
+    half_open_successes_to_close: 2
+  degradation:
+    window_s: 300
+    min_requests: 5
+    degraded_enter_failure_rate: 0.30
+    baseline_only_enter_failure_rate: 0.70
+    degraded_exit_failure_rate: 0.15
+    baseline_only_exit_failure_rate: 0.25
+    probe_every_n_requests: 1
   perf:
     worker_concurrency: 32
     per_market_inflight_limit: 1
@@ -34,6 +46,8 @@ tsfm:
   interval_sanity:
     min_width: 0.02
     max_width: 0.60
+  conformal:
+    state_path: data/derived/calibration/conformal_state.json
   slo:
     per_request_p95_ms: 300
     cycle_top_n_seconds: 60

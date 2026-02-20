@@ -21,7 +21,10 @@ from .schemas import (
 from runners.tsfm_service import TSFMRunnerService
 
 app = FastAPI(title="Market Calibration Read-Only API", version="0.1.0")
-_tsfm_service = TSFMRunnerService()
+try:
+    _tsfm_service = TSFMRunnerService.from_runtime_config()
+except FileNotFoundError:
+    _tsfm_service = TSFMRunnerService()
 
 
 def _select_latest_postmortem_path(

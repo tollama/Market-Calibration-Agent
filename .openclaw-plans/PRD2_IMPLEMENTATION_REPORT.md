@@ -488,18 +488,24 @@ Added targeted tests to mirror `.openclaw-plans/PRD12_GAP_MATRIX.md` unresolved 
   - Current run status: **Pass** (gate/severity transition determinism covered).
 - **I-01**
   - `tests/unit/test_gamma_raw_path_contract.py::test_i01_gamma_raw_path_contract_exposes_canonical_prd_dt_partition`
-  - Current run status: **Pass** (canonical `raw/gamma/dt=...` metadata contract asserted).
-  - Existing legacy acceptance tests (`tests/unit/test_i01_acceptance.py`) currently fail against additional `gamma_dt/*` keys, indicating contract drift that should be normalized in product path/output schema.
+  - `tests/unit/test_i01_acceptance.py::{test_i01_acceptance_preserves_raw_normalized_original_and_summary_contract,test_i01_acceptance_falls_back_to_normalized_when_raw_methods_are_missing}`
+  - Current run status: **Pass**.
+  - Contract is now migration-safe and explicit: canonical PRD path metadata (`raw_gamma_dt_*`) + canonical `gamma_dt/*` output keys are exposed, while legacy dataset-scoped path keys (`gamma_*` and `gamma/*`) are retained for backward compatibility.
 
 ## PRD1+PRD2 forecast-serving gap closure
 - Wired `TSFMRunnerService.from_runtime_config()` to instantiate `TollamaAdapter` from `tsfm.adapter` runtime fields (timeout/retry/backoff/jitter/pool), closing config-to-runtime drift in serving path.
 - Aligned default tollama timeout to PRD2 default (`2.0s`) in both adapter defaults and `configs/tsfm_runtime.yaml`.
 - Exposed gap-gating request fields in API schema (`y_ts`, `observed_ts`, `max_gap_minutes`) so `/tsfm/forecast` can enforce PRD2 missing-gap fallback policy through API callers (not just internal calls).
 - Enforced runtime cache bound via `cache.max_entries` to prevent unbounded in-memory growth in serving runtime.
+- **P2-11 inbound protection closure:** `/tsfm/forecast` now enforces bearer/API-key auth by default (`require_auth: true`) with configurable token env key (`token_env_var`) and deterministic fallback token (`default_token`) plus per-identity (token/IP) rate limiting.
+- **P2-11 rate-limit semantics closure:** limiter now emits `429 Too Many Requests` with RFC-compatible `Retry-After` header.
+- **P2-09 runtime observability closure:** Prometheus emission endpoint `GET /metrics` is exposed (with compatibility alias `GET /tsfm/metrics`) backed by `TSFMRunnerService.render_prometheus_metrics()` for request/fallback/latency/circuit/cache signals.
 - Added unit/API coverage for each fix:
   - runtime adapter config wiring + conversion of ms backoff/jitter to seconds
   - cache max-entry eviction behavior
   - API acceptance/pass-through of gap metadata fields
+  - auth-required success/failure path and rate-limit rejection path on `/tsfm/forecast`
+  - metrics endpoint payload exposure + service metric emission smoke assertion
 
 ## PRD1+PRD2 calibration-risk gap closure
 Closed remaining P2-07 gap for offline quality governance (time split + event-holdout interval evaluation) and strengthened calibration-risk observability hooks.
@@ -522,3 +528,33 @@ Closed remaining P2-07 gap for offline quality governance (time split + event-ho
   - validates coverage/width/pinball correctness and optional 90% path.
 - `tests/integration/test_tsfm_event_holdout_eval.py`
   - validates end-to-end event-holdout pipeline execution and artifact generation.
+
+## PRD1+PRD2 final integrated verification
+Final integrated verification executed with Python 3.11 after gap-closer changes landed.
+
+### Commands executed
+```bash
+PYTHON_BIN=python3.11 python3 scripts/prd2_release_audit.py
+PRD2_VERIFY_PYTHON_BIN=python3.11 scripts/prd2_verify_all.sh
+python3.11 -m pytest -q \
+  tests/unit/test_api_tsfm_auth.py \
+  tests/unit/test_api_tsfm_rate_limit.py \
+  tests/unit/test_tsfm_metrics_emission.py \
+  tests/unit/test_interval_metrics.py \
+  tests/unit/test_gamma_raw_path_contract.py \
+  tests/unit/test_i01_acceptance.py \
+  tests/integration/test_alert_end_to_end_pipeline.py
+```
+
+### Results
+- `scripts/prd2_release_audit.py`: **PASS** (blockers=PASS, p1=PASS; 20/20 checks passing)
+- `scripts/prd2_verify_all.sh`: **PASS** (all 4 stages passing)
+- Matrix-targeted tests above: **PASS** (`11 passed`)
+
+### Minimal fix applied during final verification
+- `/tsfm/forecast` inbound guard now enforces rate-limit before auth rejection so burst unauthorized traffic still receives deterministic `429` with `Retry-After`, while single unauthorized requests return `401`.
+- Added `Retry-After` header support on limit rejection path.
+
+### Final verdict
+- **PRD1+PRD2 integrated verification: PASS**
+- **Blockers: none**

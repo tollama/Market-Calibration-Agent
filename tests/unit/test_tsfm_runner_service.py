@@ -236,3 +236,55 @@ def test_tsfm_service_conformal_state_missing_keeps_default_behavior(tmp_path) -
 
     assert response["meta"]["conformal_state_loaded"] is False
     assert "conformal_last_step" not in response
+
+
+def test_tsfm_service_runtime_config_builds_adapter_from_adapter_block(tmp_path) -> None:
+    runtime_path = tmp_path / "tsfm_runtime.yaml"
+    runtime_path.write_text(
+        """
+ tsfm:
+   adapter:
+     timeout_s: 2.0
+     retry_count: 1
+     retry_backoff_ms: 250
+     retry_jitter_ms: 40
+     max_connections: 111
+     max_keepalive_connections: 22
+   cache:
+     ttl_s: 15
+     stale_if_error_s: 45
+     max_entries: 77
+ """.strip(),
+        encoding="utf-8",
+    )
+
+    service = TSFMRunnerService.from_runtime_config(path=runtime_path)
+
+    assert service.adapter.config.timeout_s == 2.0
+    assert service.adapter.config.retry_count == 1
+    assert service.adapter.config.retry_backoff_base_s == 0.25
+    assert service.adapter.config.retry_jitter_s == 0.04
+    assert service.adapter.config.max_connections == 111
+    assert service.adapter.config.max_keepalive_connections == 22
+    assert service.config.cache_ttl_s == 15
+    assert service.config.cache_stale_if_error_s == 45
+    assert service.config.cache_max_entries == 77
+
+
+def test_tsfm_service_cache_max_entries_is_enforced() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter(), config=TSFMServiceConfig(cache_max_entries=2))
+
+    for i in range(5):
+        service.forecast({**_request(), "as_of_ts": f"2026-02-20T00:{i:02d}:00Z"})
+
+    assert len(service._cache) <= 2
+
+
+def test_tsfm_service_emits_prometheus_metrics_after_forecast() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+
+    service.forecast(_request())
+    payload = service.render_prometheus_metrics()
+
+    assert "tsfm_request_total" in payload
+    assert "tsfm_request_latency_ms_bucket" in payload

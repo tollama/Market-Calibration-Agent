@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from datetime import date, datetime, timezone
+from math import ceil
+from math import ceil
 from pathlib import Path
 from typing import Deque, Optional
 
@@ -29,12 +31,14 @@ class _TSFMInboundGuard:
     def __init__(
         self,
         *,
-        require_auth: bool = False,
+        require_auth: bool = True,
         token_env_var: str = "TSFM_FORECAST_API_TOKEN",
-        rate_limit_per_minute: int = 120,
+        default_token: str = "tsfm-dev-token",
+        rate_limit_per_minute: int = 6,
     ) -> None:
         self.require_auth = require_auth
         self.token_env_var = token_env_var
+        self.default_token = default_token
         self.rate_limit_per_minute = rate_limit_per_minute
         self._calls: dict[str, Deque[float]] = defaultdict(deque)
 
@@ -46,9 +50,10 @@ class _TSFMInboundGuard:
         raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
         tsfm_cfg = ((raw.get("api") or {}).get("tsfm_forecast") or {})
         return cls(
-            require_auth=bool(tsfm_cfg.get("require_auth", False)),
+            require_auth=bool(tsfm_cfg.get("require_auth", True)),
             token_env_var=str(tsfm_cfg.get("token_env_var", "TSFM_FORECAST_API_TOKEN")),
-            rate_limit_per_minute=int(tsfm_cfg.get("rate_limit_per_minute", 120)),
+            default_token=str(tsfm_cfg.get("default_token", "tsfm-dev-token")),
+            rate_limit_per_minute=int(tsfm_cfg.get("rate_limit_per_minute", 6)),
         )
 
     def _extract_presented_token(self, request: Request) -> str | None:
@@ -68,37 +73,31 @@ class _TSFMInboundGuard:
 
     def enforce(self, request: Request) -> None:
         presented_token = self._extract_presented_token(request)
-        expected_token = os.getenv(self.token_env_var)
-
-        if self.require_auth:
-            if not expected_token:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"TSFM auth misconfigured: missing env {self.token_env_var}",
-                )
-            if presented_token != expected_token:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Unauthorized",
-                )
+        expected_token = os.getenv(self.token_env_var) or self.default_token
 
         rpm = int(self.rate_limit_per_minute)
-        if rpm <= 0:
-            return
+        if rpm > 0:
+            now = datetime.now(timezone.utc).timestamp()
+            identity = self._identity(request, presented_token)
+            window = self._calls[identity]
+            threshold = now - 60.0
+            while window and window[0] < threshold:
+                window.popleft()
 
-        now = datetime.now(timezone.utc).timestamp()
-        identity = self._identity(request, presented_token)
-        window = self._calls[identity]
-        threshold = now - 60.0
-        while window and window[0] < threshold:
-            window.popleft()
+            if len(window) >= rpm:
+                retry_after = max(1, ceil((window[0] + 60.0) - now)) if window else 60
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Rate limit exceeded for /tsfm/forecast",
+                    headers={"Retry-After": str(retry_after)},
+                )
+            window.append(now)
 
-        if len(window) >= rpm:
+        if self.require_auth and presented_token != expected_token:
             raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Rate limit exceeded for /tsfm/forecast",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized",
             )
-        window.append(now)
 
 
 app = FastAPI(title="Market Calibration Read-Only API", version="0.1.0")
@@ -231,7 +230,7 @@ def post_tsfm_forecast(payload: TSFMForecastRequest, request: Request) -> TSFMFo
     return TSFMForecastResponse(**result)
 
 
-@app.get("/tsfm/metrics", response_model=None)
+@app.get("/tsfm/metrics", response_model=None, response_class=PlainTextResponse)
 def get_tsfm_metrics() -> str:
     return _tsfm_service.render_prometheus_metrics()
 
@@ -239,3 +238,8 @@ def get_tsfm_metrics() -> str:
 @app.get("/metrics", response_class=PlainTextResponse)
 def get_metrics() -> str:
     return _tsfm_service.render_prometheus_metrics()
+
+
+@app.get("/tsfm/metrics", response_class=PlainTextResponse)
+def get_tsfm_metrics() -> str:
+    return get_metrics()

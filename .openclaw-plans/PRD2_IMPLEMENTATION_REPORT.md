@@ -432,6 +432,7 @@ Result: **all tests passed locally**.
 - Added ops documentation: `docs/ops/prd2-test-fixtures.md`.
 
 ## PRD1+PRD2 market-pipeline gap closure
+Status update (I-01): canonical raw dt-partition contract + legacy-compatible output key migration behavior are now validated and closed.
 Addressed remaining gaps in market data pipeline/feature preparation paths that were not fully aligned with PRD1 I-06/I-07 and PRD2 Data Prep defaults.
 
 ### Gaps closed

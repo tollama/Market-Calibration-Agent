@@ -184,9 +184,26 @@ Expected: `gate_passed=false`, `rollback_triggered=true` with rollback reasons.
 - Ops index added: `docs/ops/README.md` links runbook/rules/evaluator assets.
 - Canary runbook references monitor rule file + evaluator usage for on-call handoff.
 
+## Conformal ops
+- Added rolling conformal updater pipeline: `pipelines/update_conformal_calibration.py`
+  - Reads calibration history from JSONL/CSV (`q10,q50,q90,actual` or `resolved_prob`).
+  - Applies rolling-window fit (`--window-size`, `--min-samples`, `--target-coverage`).
+  - Computes pre/post empirical coverage and persists state.
+- Added persistence module: `calibration/conformal_state.py`
+  - Default state path: `data/derived/calibration/conformal_state.json`
+  - Save/load helpers with schema version and metadata.
+- Wired inference-time consumption in `TSFMRunnerService`
+  - Auto-loads conformal state on startup when present.
+  - Preserves previous behavior when state is missing/invalid.
+  - Emits `meta.conformal_state_loaded` and (if loaded) `conformal_last_step`.
+- Added tests:
+  - `tests/unit/test_conformal_state.py` (load/save round-trip, missing-file fallback, legacy flat payload)
+  - `tests/unit/test_tsfm_runner_service.py` extensions (auto-load usage + missing-state fallback)
+- Added runbook: `docs/conformal-ops.md` (manual run + cron schedule examples)
+
 ## Remaining risks / follow-up
 1. **tollama endpoint schema drift risk**: adapter isolates app contract but still requires updates if runtime schema changes.
-2. **Conformal is currently request-time hook**: persistent rolling calibrator job + store can be expanded.
+2. **Conformal coverage monitoring still needed in prod dashboards**: updater/state are in place, but alert thresholds for calibration drift should be wired to observability.
 3. **Observability backend wiring pending**: rules/runbook/evaluator are added; metrics exporter/dashboard integration still needed per environment.
 
 ## Perf CI gate

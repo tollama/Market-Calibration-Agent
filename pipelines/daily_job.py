@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .build_cutoff_snapshots import stage_build_cutoff_snapshots
 from .common import (
+    PipelineResult,
     PipelineRunContext,
     PipelineStage,
+    StageResult,
     generate_run_id,
-    run_stages,
+    load_checkpoint,
+    save_checkpoint,
 )
 
 
@@ -157,11 +161,132 @@ def build_daily_stages() -> list[PipelineStage]:
     ]
 
 
+def _checkpoint_stage_payload(
+    *,
+    context: PipelineRunContext,
+    stage_results: list[StageResult],
+    backfill_days: int,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "run_id": context.run_id,
+        "stages": {
+            stage.name: {
+                "status": stage.status,
+                "output": stage.output,
+                "error": stage.error,
+            }
+            for stage in stage_results
+        },
+    }
+    if context.data_interval_start is not None:
+        payload["data_interval_start"] = context.data_interval_start
+    if context.data_interval_end is not None:
+        payload["data_interval_end"] = context.data_interval_end
+    if backfill_days > 0:
+        payload["backfill_days"] = backfill_days
+    return payload
+
+
+def _checkpoint_stage_lookup(path: str | None, resume_from_checkpoint: bool) -> dict[str, dict[str, Any]]:
+    if path is None or not resume_from_checkpoint:
+        return {}
+
+    payload = load_checkpoint(path)
+    raw_stages = payload.get("stages")
+    if not isinstance(raw_stages, dict):
+        return {}
+
+    stages: dict[str, dict[str, Any]] = {}
+    for stage_name, stage_payload in raw_stages.items():
+        if not isinstance(stage_name, str):
+            continue
+        if not isinstance(stage_payload, dict):
+            continue
+        output = stage_payload.get("output")
+        stages[stage_name] = {
+            "status": stage_payload.get("status"),
+            "output": dict(output) if isinstance(output, dict) else {},
+            "error": stage_payload.get("error"),
+        }
+    return stages
+
+
+def _run_daily_stages(
+    *,
+    context: PipelineRunContext,
+    checkpoint_path: str | None,
+    resume_from_checkpoint: bool,
+    backfill_days: int,
+) -> PipelineResult:
+    checkpoint_stages = _checkpoint_stage_lookup(checkpoint_path, resume_from_checkpoint)
+    stage_results: list[StageResult] = []
+
+    for stage in build_daily_stages():
+        checkpoint_stage = checkpoint_stages.get(stage.name)
+        if (
+            checkpoint_stage is not None
+            and resume_from_checkpoint
+            and checkpoint_stage.get("status") == "success"
+        ):
+            stage_results.append(
+                StageResult(
+                    name=stage.name,
+                    status="success",
+                    output=checkpoint_stage.get("output", {}),
+                    error=None,
+                )
+            )
+            continue
+
+        try:
+            output = stage.handler(context)
+            stage_result = StageResult(name=stage.name, status="success", output=output)
+        except Exception as exc:  # pragma: no cover - defensive skeleton behavior
+            stage_result = StageResult(
+                name=stage.name,
+                status="failed",
+                output={},
+                error=str(exc),
+            )
+            stage_results.append(stage_result)
+            if checkpoint_path is not None:
+                save_checkpoint(
+                    checkpoint_path,
+                    _checkpoint_stage_payload(
+                        context=context,
+                        stage_results=stage_results,
+                        backfill_days=backfill_days,
+                    ),
+                )
+            break
+
+        stage_results.append(stage_result)
+        if checkpoint_path is not None:
+            save_checkpoint(
+                checkpoint_path,
+                _checkpoint_stage_payload(
+                    context=context,
+                    stage_results=stage_results,
+                    backfill_days=backfill_days,
+                ),
+            )
+
+    return PipelineResult(
+        run_id=context.run_id,
+        started_at=context.started_at,
+        finished_at=datetime.now(timezone.utc),
+        stages=stage_results,
+    )
+
+
 def run_daily_job(
     *,
     run_id: Optional[str] = None,
     data_interval_start: Optional[str] = None,
     data_interval_end: Optional[str] = None,
+    checkpoint_path: str | None = None,
+    resume_from_checkpoint: bool = False,
+    backfill_days: int = 0,
 ) -> dict[str, Any]:
     """Execute the minimal daily orchestrator skeleton."""
 
@@ -170,8 +295,16 @@ def run_daily_job(
         data_interval_start=data_interval_start,
         data_interval_end=data_interval_end,
     )
-    result = run_stages(context=context, stages=build_daily_stages())
-    return {
+    if backfill_days > 0:
+        context.state["backfill_days"] = backfill_days
+
+    result = _run_daily_stages(
+        context=context,
+        checkpoint_path=checkpoint_path,
+        resume_from_checkpoint=resume_from_checkpoint,
+        backfill_days=backfill_days,
+    )
+    payload = {
         "run_id": result.run_id,
         "success": result.success,
         "stage_order": [stage.name for stage in result.stages],
@@ -185,3 +318,10 @@ def run_daily_job(
             for stage in result.stages
         ],
     }
+    if checkpoint_path is not None:
+        payload["checkpoint_path"] = checkpoint_path
+    if resume_from_checkpoint:
+        payload["resume_from_checkpoint"] = True
+    if backfill_days > 0:
+        payload["backfill_days"] = backfill_days
+    return payload

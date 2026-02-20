@@ -15,20 +15,18 @@ class StrictJSONError(ValueError):
 class QuestionQualityResult:
     """Result schema for question quality scoring."""
 
-    score: int
-    verdict: str
-    reasons: list[str]
-    suggestions: list[str]
+    ambiguity_score: float
+    resolution_risk_score: float
+    trigger_events: list[dict]
+    rationale_bullets: list[str]
 
     def __post_init__(self) -> None:
-        if self.score < 0 or self.score > 100:
-            raise StrictJSONError("score must be between 0 and 100")
-        if not self.verdict.strip():
-            raise StrictJSONError("verdict must be non-empty")
-        if not self.reasons:
-            raise StrictJSONError("reasons must include at least one item")
-        if not self.suggestions:
-            raise StrictJSONError("suggestions must include at least one item")
+        if self.ambiguity_score < 0 or self.ambiguity_score > 1:
+            raise StrictJSONError("ambiguity_score must be between 0 and 1")
+        if self.resolution_risk_score < 0 or self.resolution_risk_score > 1:
+            raise StrictJSONError("resolution_risk_score must be between 0 and 1")
+        if len(self.rationale_bullets) < 1 or len(self.rationale_bullets) > 5:
+            raise StrictJSONError("rationale_bullets must contain between 1 and 5 items")
 
 
 @dataclass(frozen=True)

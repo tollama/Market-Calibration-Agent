@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Optional
 
 StageName = Literal[
@@ -68,6 +70,33 @@ def generate_run_id(prefix: str = "daily") -> str:
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{prefix}-{ts}"
+
+
+def save_checkpoint(path: str, payload: dict[str, Any]) -> None:
+    """Persist a checkpoint payload as JSON."""
+
+    checkpoint_path = Path(path)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    with checkpoint_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=True, sort_keys=True)
+
+
+def load_checkpoint(path: str) -> dict[str, Any]:
+    """Load a checkpoint payload from disk if it exists."""
+
+    checkpoint_path = Path(path)
+    if not checkpoint_path.exists():
+        return {}
+
+    try:
+        with checkpoint_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except json.JSONDecodeError:
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+    return payload
 
 
 def run_stages(

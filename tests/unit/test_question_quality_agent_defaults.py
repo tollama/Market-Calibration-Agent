@@ -31,8 +31,9 @@ class _StubBackend:
             }
         )
         return (
-            '{"score":82,"verdict":"good","reasons":["clear"],'
-            '"suggestions":["add constraints"]}'
+            '{"ambiguity_score":0.18,"resolution_risk_score":0.27,'
+            '"trigger_events":[{"type":"deadline","date":"2026-03-01"}],'
+            '"rationale_bullets":["Question is specific and includes a time horizon."]}'
         )
 
 

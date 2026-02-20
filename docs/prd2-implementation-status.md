@@ -132,3 +132,22 @@ PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 200 --unique
   - `latency_p95_ms <= 300`
   - `elapsed_s <= 60`
 - 기대 출력: 마지막 줄 `SLO_PASS`
+
+## PRD1+PRD2 regression sweep
+- 실행 시각: 2026-02-21 05:22 (KST)
+- Python: `python3.11`
+- PRD1 critical constraints quick check:
+  - I-13: Brier/LogLoss/ECE/slope/intercept + `category×liquidity×TTE` 세그먼트, parquet+markdown 출력
+  - I-15: Gate1(band breach) + Gate2(OI/volume) + Gate3(ambiguity low) 기반 alert_event 생성
+- PRD2 AC quick check:
+  - 기능: q10/q50/q90 반환, tollama 실패 시 fallback(`fallback_used=true`)
+  - 정확성: `[0,1]` clipping, quantile non-crossing, conformal coverage 목표 충족
+  - 운영: SLO/관측성 지표, Gate1 연계 안정성
+- 실행 커맨드:
+  - `PYTHON_BIN=python3.11 python3 scripts/prd2_release_audit.py`
+  - `PRD2_VERIFY_PYTHON_BIN=python3.11 scripts/prd2_verify_all.sh`
+- 결과:
+  - `scripts/prd2_release_audit.py`: **PASS** (blocker 11/11, p1 6/6)
+  - `scripts/prd2_verify_all.sh`: **PASS** (unit/integration/perf/audit 전 단계 통과)
+  - 산출물: `artifacts/prd2_verify_summary.json`
+- 회귀 수정 필요 사항: 없음 (green 상태 유지)

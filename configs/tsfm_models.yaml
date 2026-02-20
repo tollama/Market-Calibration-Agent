@@ -1,0 +1,29 @@
+runtime:
+  provider: tollama
+  base_url: http://localhost:11435
+  endpoint: /v1/timeseries/forecast
+
+models:
+  chronos-bolt:
+    model_name: chronos
+    model_version: "2026-02-01"
+    license_tag: commercial_ok
+  timesfm-1:
+    model_name: timesfm
+    model_version: "2026-01-15"
+    license_tag: commercial_ok
+  research-sandbox:
+    model_name: research-sandbox
+    model_version: "dev"
+    license_tag: research_only
+
+environments:
+  prod:
+    allowed_models:
+      - chronos-bolt
+      - timesfm-1
+  dev:
+    allowed_models:
+      - chronos-bolt
+      - timesfm-1
+      - research-sandbox

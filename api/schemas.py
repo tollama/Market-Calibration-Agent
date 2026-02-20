@@ -46,3 +46,40 @@ class PostmortemResponse(BaseModel):
     market_id: str
     content: str
     source_path: str
+
+
+class TSFMModelConfig(BaseModel):
+    provider: str = "tollama"
+    model_name: str = "chronos"
+    model_version: Optional[str] = None
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TSFMTransformConfig(BaseModel):
+    space: str = "logit"
+    eps: float = 1e-6
+
+
+class TSFMForecastRequest(BaseModel):
+    market_id: str
+    as_of_ts: datetime
+    freq: str = "5m"
+    horizon_steps: int = 12
+    quantiles: List[float] = Field(default_factory=lambda: [0.1, 0.5, 0.9])
+    y: List[float]
+    x_past: Dict[str, List[float]] = Field(default_factory=dict)
+    x_future: Dict[str, List[float]] = Field(default_factory=dict)
+    transform: TSFMTransformConfig = Field(default_factory=TSFMTransformConfig)
+    model: TSFMModelConfig = Field(default_factory=TSFMModelConfig)
+    liquidity_bucket: Optional[str] = None
+
+
+class TSFMForecastResponse(BaseModel):
+    market_id: str
+    as_of_ts: datetime
+    freq: str
+    horizon_steps: int
+    quantiles: List[float]
+    yhat_q: Dict[str, List[float]]
+    meta: Dict[str, Any] = Field(default_factory=dict)
+    conformal_last_step: Optional[Dict[str, Any]] = None

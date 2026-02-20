@@ -47,4 +47,5 @@ pytest
 ## Architecture / Notes
 
 - [PRD1 구현 상태 (I-01~I-20)](docs/prd1-implementation-status.md) - 최신 판정, 남은 갭, 실행 백로그
+- [PRD2 TSFM Runner 구현 상태](docs/prd2-implementation-status.md) - tollama 기반 TSFM runner, fallback, post-processing, conformal, 운영 가이드
 - [Label resolver defaults and precedence](docs/label-resolver-defaults.md)

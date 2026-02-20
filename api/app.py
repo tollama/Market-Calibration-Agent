@@ -15,9 +15,13 @@ from .schemas import (
     PostmortemResponse,
     ScoreboardItem,
     ScoreboardResponse,
+    TSFMForecastRequest,
+    TSFMForecastResponse,
 )
+from runners.tsfm_service import TSFMRunnerService
 
 app = FastAPI(title="Market Calibration Read-Only API", version="0.1.0")
+_tsfm_service = TSFMRunnerService()
 
 
 def _select_latest_postmortem_path(
@@ -133,3 +137,9 @@ def get_postmortem(
         content=content,
         source_path=str(source_path),
     )
+
+
+@app.post("/tsfm/forecast", response_model=TSFMForecastResponse)
+def post_tsfm_forecast(payload: TSFMForecastRequest) -> TSFMForecastResponse:
+    result = _tsfm_service.forecast(payload.model_dump())
+    return TSFMForecastResponse(**result)

@@ -202,6 +202,20 @@ Expected: `gate_passed=false`, `rollback_triggered=true` with rollback reasons.
   - `tests/unit/test_tsfm_runner_service.py` extensions (auto-load usage + missing-state fallback)
 - Added runbook: `docs/conformal-ops.md` (manual run + cron schedule examples)
 
+## Final integration verification (2026-02-21, Python 3.11)
+Executed final end-to-end release checks after integrating all recent PRD2 commits (fixture pack, chaos drills, core hardening, Python runtime gate, rolling conformal ops).
+
+```bash
+PYTHON_BIN=python3.11 python3 scripts/prd2_release_audit.py
+PRD2_VERIFY_PYTHON_BIN=python3.11 scripts/prd2_verify_all.sh
+```
+
+Observed results:
+- `PRD2 Release Audit: PASS`
+- `scripts/prd2_verify_all.sh`: all 4 steps PASS (unit selection, integration selection, perf benchmark, release audit)
+- machine-readable verification summary written to:
+  - `artifacts/prd2_verify_summary.json`
+
 ## Remaining risks / follow-up
 1. **tollama endpoint schema drift risk**: adapter isolates app contract but still requires updates if runtime schema changes.
 2. **Conformal coverage monitoring still needed in prod dashboards**: updater/state are in place, but alert thresholds for calibration drift should be wired to observability.

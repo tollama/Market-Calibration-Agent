@@ -58,10 +58,11 @@
 ## Stage 9 — 성능/처리량 강화
 - `TSFMRunnerService`에 성능 안정화 기본기 추가:
   - 요청 해시 기반 TTL cache (`cache_ttl_s=60`)
-  - 연속 실패 기반 circuit breaker (`3회 실패`, `30s` cooldown)
+  - rolling-window 기반 circuit breaker (`failure_rate_to_open=1.0`, `cooldown=120s`)
+  - stale-if-error cache (`stale_if_error_s=120`)
 - `TollamaAdapter` 커넥션 풀 기본값 추가:
   - `max_connections=200`
-  - `max_keepalive_connections=20`
+  - `max_keepalive_connections=50`
 - 성능 스모크 벤치마크 추가:
   - `pipelines/bench_tsfm_runner_perf.py`
   - p95/사이클 시간 SLO budget check 내장
@@ -77,7 +78,7 @@
 - `tollama timeout=1.2s, retry=1(+exp backoff/jitter)`: p95/p99 tail-latency 방어
 - `baseline_method=EWMA`: 계산비용 낮고 fallback latency 유리
 - `min_points_for_tsfm=32`: 극단적 짧은 시계열 보호
-- `min_interval_width=0.02, max_interval_width=0.9`: 과도한 협/광 밴드 방지
+- `min_interval_width=0.02, max_interval_width=0.6`: 과도한 협/광 밴드 방지
 - `baseline_only_liquidity=low`: 극저유동 시장에서는 보수적 운영
 - `cache_ttl_s=60`: 5분 cadence에서 동일 요청 burst 흡수
 - `circuit_breaker_failures=5, cooldown=120s`: flapping 줄이고 안정적 복구 유도

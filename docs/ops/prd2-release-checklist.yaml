@@ -1,0 +1,96 @@
+version: 1
+name: PRD2 Release Readiness Checklist
+description: Machine-readable checklist for PRD2 release blockers and P1 quality gates.
+release_blockers:
+  - id: RB-001
+    title: TSFM forecast API contract implemented
+    severity: blocker
+    type: file
+    path: api/schemas.py
+  - id: RB-002
+    title: TSFM forecast endpoint wired in API
+    severity: blocker
+    type: file
+    path: api/app.py
+  - id: RB-003
+    title: Tollama adapter implementation present
+    severity: blocker
+    type: file
+    path: runners/tollama_adapter.py
+  - id: RB-004
+    title: TSFM runner service implementation present
+    severity: blocker
+    type: file
+    path: runners/tsfm_service.py
+  - id: RB-005
+    title: TSFM model registry with license tags
+    severity: blocker
+    type: file
+    path: configs/tsfm_models.yaml
+  - id: RB-006
+    title: TSFM runtime config present
+    severity: blocker
+    type: file
+    path: configs/tsfm_runtime.yaml
+  - id: RB-007
+    title: Baseline fallback behavior tested
+    severity: blocker
+    type: file
+    path: tests/unit/test_tsfm_runner_service.py
+  - id: RB-008
+    title: API contract test present
+    severity: blocker
+    type: file
+    path: tests/unit/test_api_tsfm_forecast.py
+  - id: RB-009
+    title: License guardrail test present
+    severity: blocker
+    type: file
+    path: tests/unit/test_tsfm_model_license_guard.py
+  - id: RB-010
+    title: PRD2 unit/API gate passes
+    severity: blocker
+    type: command
+    command: python3 -m pytest tests/unit/test_tsfm_runner_service.py tests/unit/test_api_tsfm_forecast.py tests/unit/test_tsfm_model_license_guard.py tests/unit/test_tsfm_perf_smoke.py
+    timeout_s: 240
+  - id: RB-011
+    title: Perf smoke SLO gate passes
+    severity: blocker
+    type: command
+    command: PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 60 --unique 20 --adapter-latency-ms 15 --budget-p95-ms 300 --budget-cycle-s 60
+    timeout_s: 240
+
+p1_items:
+  - id: P1-001
+    title: Live tollama integration runbook exists
+    severity: p1
+    type: file
+    path: docs/ops/live-tollama-integration-runbook.md
+  - id: P1-002
+    title: TSFM canary rollout runbook exists
+    severity: p1
+    type: file
+    path: docs/ops/tsfm-canary-rollout-runbook.md
+  - id: P1-003
+    title: CI workflow includes PRD2 checks
+    severity: p1
+    type: file
+    path: .github/workflows/ci.yml
+  - id: P1-004
+    title: Performance benchmark pipeline exists
+    severity: p1
+    type: file
+    path: pipelines/bench_tsfm_runner_perf.py
+  - id: P1-005
+    title: Live integration tests are runnable (may skip if env not configured)
+    severity: p1
+    type: command
+    command: python3 -m pytest tests/integration/test_tollama_live_integration.py -q
+    timeout_s: 240
+
+metadata:
+  owner: calibration-platform
+  prd: PRD2
+  notes:
+    - Blockers must all pass for release readiness.
+    - P1 items should pass; skipped integration checks are treated as pass with warning by policy in audit script.

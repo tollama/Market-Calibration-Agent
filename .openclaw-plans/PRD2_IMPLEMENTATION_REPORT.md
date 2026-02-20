@@ -199,3 +199,47 @@ Expected: `gate_passed=false`, `rollback_triggered=true` with rollback reasons.
   - Parses benchmark stdout (`key=value`) into normalized JSON.
   - Validates thresholds and returns non-zero on regression.
 - Added operations doc: `docs/ops/prd2-perf-gate.md` with local run commands and output format.
+
+## One-command verification
+- Added `scripts/prd2_verify_all.sh` as a deterministic single entrypoint for PRD2 release checks.
+- Execution order is fixed: unit selection → integration selection → perf benchmark → release audit.
+- Script hardening:
+  - `set -euo pipefail`
+  - timestamped logs
+  - per-step log files under `artifacts/prd2_verify_logs/`
+  - non-zero exit on any failed step
+- Added machine-readable summary output: `artifacts/prd2_verify_summary.json`.
+- Added operations doc: `docs/ops/prd2-verify-all.md` (local + CI usage, dry-run mode, artifact expectations).
+
+## Release audit automation
+- Added machine-readable checklist: `docs/ops/prd2-release-checklist.yaml`
+  - Encodes PRD2 release blockers and P1 checks as explicit `file` and `command` gates.
+- Added automated auditor: `scripts/prd2_release_audit.py`
+  - Loads YAML checklist and validates required artifacts/commands.
+  - Emits human-readable and JSON (`--json`) PASS/FAIL reports.
+  - Returns exit code `0/1/2` for CI-friendly gating.
+- Added usage guide: `docs/ops/prd2-release-audit.md`
+  - Documents run commands, output interpretation, and examples.
+- Current status verification command:
+  - `python3 scripts/prd2_release_audit.py`
+
+## Dashboard pack
+Added static Grafana observability artifacts for PRD2 under `monitoring/grafana/`:
+- `prd2-observability-dashboard.json`
+- `prd2-observability-dashboard.provider.yaml`
+
+Dashboard includes required panels:
+- request latency p50/p95/p99
+- error rate
+- fallback rate by reason
+- breaker-open rate
+- cache hit rate
+- top-N cycle time (p95 by `market_id`)
+
+Added concise ops doc:
+- `docs/ops/prd2-dashboards.md` (UI import, file provisioning, expected PromQL/metrics)
+
+Quick sanity checks performed:
+- JSON parse validation for dashboard file: PASS
+- YAML parse validation for provider file: PASS
+- `monitoring/grafana/` and docs references present in git diff.

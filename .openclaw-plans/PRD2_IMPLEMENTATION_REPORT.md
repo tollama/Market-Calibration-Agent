@@ -68,6 +68,9 @@ Implemented PRD2 sequentially (Stage 1..n), then extended with explicit runtime/
 - `tests/unit/test_tsfm_runner_service.py` (new, then extended)
 - `tests/unit/test_api_tsfm_forecast.py` (new)
 - `tests/unit/test_tsfm_model_license_guard.py` (new)
+- `tests/integration/test_tollama_live_integration.py` (new)
+- `.github/workflows/ci.yml` (new)
+- `docs/ops/live-tollama-integration-runbook.md` (new)
 - `pipelines/bench_tsfm_runner_perf.py` (new)
 - `docs/prd2-implementation-status.md` (new, then updated)
 - `README.md` (updated link)
@@ -123,8 +126,24 @@ Observed (cold-ish, no cache reuse):
 - Start API: `uvicorn api.app:app --reload`
 - Perf smoke: `PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py ...`
 
+## Live integration CI
+- Added live integration tests: `tests/integration/test_tollama_live_integration.py`
+  - `TollamaAdapter` live request/response shape validation
+  - `TSFMRunnerService` live-path assertion (`fallback_used=false` expected on healthy runtime)
+- Added CI workflow: `.github/workflows/ci.yml`
+  - `unit-tests` always run on PR/push/nightly/manual
+  - `live-tollama-integration` runs only when gated:
+    - event is nightly (`schedule`) **or** repo variable `ENABLE_LIVE_TOLLAMA_CI=true`
+    - and secret `TOLLAMA_BASE_URL` is present
+- Added ops runbook: `docs/ops/live-tollama-integration-runbook.md`
+  - local env setup
+  - skip/default safety behavior
+  - CI secret/variable checklist
+- Safety default for CI/local:
+  - live tests are disabled unless `LIVE_TOLLAMA_TESTS=1`
+  - tests skip (not fail) when tollama host:port is unreachable
+
 ## Remaining risks / follow-up
 1. **tollama endpoint schema drift risk**: adapter isolates app contract but still requires updates if runtime schema changes.
-2. **No live tollama integration in CI**: current coverage is unit-level with adapter stubs.
-3. **Conformal is currently request-time hook**: persistent rolling calibrator job + store can be expanded.
-4. **Observability backend wiring pending**: metadata fields are in place; metrics sink/dashboard integration still needed.
+2. **Conformal is currently request-time hook**: persistent rolling calibrator job + store can be expanded.
+3. **Observability backend wiring pending**: metadata fields are in place; metrics sink/dashboard integration still needed.

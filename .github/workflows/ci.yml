@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: pytest -q tests/unit
+
+  live-tollama-integration:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'schedule' || vars.ENABLE_LIVE_TOLLAMA_CI == 'true') && secrets.TOLLAMA_BASE_URL != '' }}
+    env:
+      LIVE_TOLLAMA_TESTS: "1"
+      TOLLAMA_BASE_URL: ${{ secrets.TOLLAMA_BASE_URL }}
+      TOLLAMA_TOKEN: ${{ secrets.TOLLAMA_TOKEN }}
+      TOLLAMA_ENDPOINT: ${{ vars.TOLLAMA_ENDPOINT }}
+      TOLLAMA_MODEL_NAME: ${{ vars.TOLLAMA_MODEL_NAME }}
+      TOLLAMA_MODEL_VERSION: ${{ vars.TOLLAMA_MODEL_VERSION }}
+      TOLLAMA_TIMEOUT_S: "8"
+      TOLLAMA_RETRY_COUNT: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run live tollama integration tests
+        run: pytest -q tests/integration/test_tollama_live_integration.py

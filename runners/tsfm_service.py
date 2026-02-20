@@ -239,6 +239,7 @@ class TSFMRunnerService:
             }
             meta["runtime"] = "baseline"
             meta["fallback_used"] = True
+            meta["fallback_reason"] = fallback_reason
             warnings.append(f"fallback_reason={fallback_reason}")
 
         if use_logit and meta["runtime"] != "baseline":

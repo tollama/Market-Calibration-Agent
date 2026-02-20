@@ -48,6 +48,7 @@ def test_tsfm_service_falls_back_to_baseline_on_adapter_error() -> None:
 
     assert response["meta"]["fallback_used"] is True
     assert response["meta"]["runtime"] == "baseline"
+    assert response["meta"]["fallback_reason"].startswith("tollama_error:")
     assert "fallback_reason=" in " ".join(response["meta"]["warnings"])
 
 

@@ -52,7 +52,7 @@ Implemented PRD2 sequentially (Stage 1..n), then extended with explicit runtime/
     - quantile set must match expected set,
     - per-quantile horizon length must match request,
     - all values must be finite.
-  - On violations, service deterministically falls back to baseline and records explicit reason.
+  - On violations, service deterministically falls back to baseline and records explicit reason (`meta.fallback_reason`).
 - **Interval guardrail tightened**
   - `max_interval_width` reduced from `0.9` to `0.6` to avoid unusably wide degraded intervals.
 - **Runtime perf config file added**

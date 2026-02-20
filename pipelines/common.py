@@ -20,7 +20,7 @@ StageStatus = Literal["success", "failed"]
 StageHandler = Callable[["PipelineRunContext"], dict[str, Any]]
 
 
-@dataclass(slots=True)
+@dataclass
 class PipelineRunContext:
     """Execution context shared across stage handlers."""
 
@@ -31,7 +31,7 @@ class PipelineRunContext:
     state: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class PipelineStage:
     """A single named pipeline stage."""
 
@@ -39,7 +39,7 @@ class PipelineStage:
     handler: StageHandler
 
 
-@dataclass(slots=True)
+@dataclass
 class StageResult:
     """Structured result for a single stage execution."""
 
@@ -49,7 +49,7 @@ class StageResult:
     error: Optional[str] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class PipelineResult:
     """Pipeline run summary."""
 

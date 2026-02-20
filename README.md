@@ -43,3 +43,8 @@ pytest
 - `configs/alerts.yaml` - alert thresholds, cooldowns, and channels.
 - `configs/models.yaml` - model profiles and feature settings.
 - `configs/logging.yaml` - Python logging configuration.
+
+## Architecture / Notes
+
+- [Label resolver defaults and precedence](docs/label-resolver-defaults.md)
+- [PRD1 구현 상태 (I-01~I-20)](docs/prd1-implementation-status.md)

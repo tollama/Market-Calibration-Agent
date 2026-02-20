@@ -4,15 +4,20 @@ models:
   baseline:
     family: logistic
     features:
-      - mid_price
-      - spread
-      - volume_1h
-      - volatility_1h
-    regularization: 0.10
+      - returns
+      - vol
+      - volume_velocity
+      - oi_change
+      - tte
+      - liquidity_bucket
+    regularization: 0.20
 
   fallback:
     family: isotonic
     features:
-      - mid_price
-      - volume_1h
-    min_samples: 500
+      - returns
+      - vol
+      - volume_velocity
+      - tte
+      - liquidity_bucket
+    min_samples: 1000

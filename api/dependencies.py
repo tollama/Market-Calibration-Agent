@@ -47,6 +47,16 @@ def _read_records(path: Path) -> List[Dict[str, Any]]:
     return []
 
 
+def _parse_record_datetime(record: Dict[str, Any], field: str) -> Optional[datetime]:
+    value = record.get(field)
+    if not isinstance(value, str):
+        return None
+    try:
+        return _parse_iso_datetime(value)
+    except ValueError:
+        return None
+
+
 class LocalDerivedStore:
     """Read-only loader for derived artifacts used by the API."""
 
@@ -65,8 +75,63 @@ class LocalDerivedStore:
     def postmortem_dir(self) -> Path:
         return self.derived_root / "reports" / "postmortem"
 
+    def _scan_partition_records(
+        self,
+        *,
+        root: Path,
+        filename: str,
+    ) -> List[Dict[str, Any]]:
+        partition_files = sorted(
+            root.glob(f"dt=*/{filename}"),
+            key=lambda path: (path.parent.name, str(path)),
+            reverse=True,
+        )
+        merged: List[Dict[str, Any]] = []
+        for path in partition_files:
+            merged.extend(_read_records(path))
+        return merged
+
+    def _dedupe_alert_records(
+        self,
+        records: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        deduped: List[Dict[str, Any]] = []
+        seen_keys: set[Tuple[str, ...]] = set()
+
+        for record in records:
+            dedupe_key: Optional[Tuple[str, ...]] = None
+
+            alert_id = record.get("alert_id")
+            if alert_id not in (None, ""):
+                dedupe_key = ("alert_id", str(alert_id))
+            else:
+                market_id = record.get("market_id")
+                ts = record.get("ts")
+                if market_id not in (None, "") and ts not in (None, ""):
+                    dedupe_key = ("market_ts", str(market_id), str(ts))
+
+            if dedupe_key is not None:
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+
+            deduped.append(record)
+
+        return deduped
+
     def load_scoreboard(self, *, window: str) -> List[Dict[str, Any]]:
         records = _read_records(self.scoreboard_path)
+        if not self.scoreboard_path.exists():
+            records = self._scan_partition_records(
+                root=self.derived_root / "metrics",
+                filename="scoreboard.json",
+            )
+            records.sort(
+                key=lambda item: _parse_record_datetime(item, "as_of")
+                or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True,
+            )
+
         filtered = [
             record
             for record in records
@@ -82,18 +147,26 @@ class LocalDerivedStore:
         offset: int,
     ) -> Tuple[List[Dict[str, Any]], int]:
         records = _read_records(self.alerts_path)
+        if not self.alerts_path.exists():
+            records = self._scan_partition_records(
+                root=self.derived_root / "alerts",
+                filename="alerts.json",
+            )
+            records = self._dedupe_alert_records(records)
+
         since_utc = _normalize_utc(since) if since else None
 
         filtered: List[Dict[str, Any]] = []
         for record in records:
-            record_ts = _parse_iso_datetime(str(record.get("ts")))
+            record_ts = _parse_record_datetime(record, "ts")
             if since_utc and (record_ts is None or record_ts < since_utc):
                 continue
             filtered.append(record)
 
         # newest first for feed semantics
         filtered.sort(
-            key=lambda item: _parse_iso_datetime(str(item.get("ts"))) or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda item: _parse_record_datetime(item, "ts")
+            or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True,
         )
 

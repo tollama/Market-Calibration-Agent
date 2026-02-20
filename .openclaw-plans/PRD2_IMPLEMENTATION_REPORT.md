@@ -185,6 +185,7 @@ Expected: `gate_passed=false`, `rollback_triggered=true` with rollback reasons.
 - Canary runbook references monitor rule file + evaluator usage for on-call handoff.
 
 ## Conformal ops
+- Follow-up #7 implemented: moved conformal calibration toward rolling operational flow with persisted state.
 - Added rolling conformal updater pipeline: `pipelines/update_conformal_calibration.py`
   - Reads calibration history from JSONL/CSV (`q10,q50,q90,actual` or `resolved_prob`).
   - Applies rolling-window fit (`--window-size`, `--min-samples`, `--target-coverage`).

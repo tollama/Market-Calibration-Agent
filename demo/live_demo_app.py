@@ -325,6 +325,22 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
 
 
+def streamlit_notice(level: str, message: str) -> None:
+    """Render a notice with a safe Streamlit method mapping.
+
+    Supports success/info/warning/error, and falls back to info for unknown labels
+    (e.g., legacy "secondary").
+    """
+    notice_map = {
+        "success": st.success,
+        "info": st.info,
+        "warning": st.warning,
+        "error": st.error,
+    }
+    renderer = notice_map.get((level or "").strip().lower(), st.info)
+    renderer(message)
+
+
 def compute_live_change(y: list[float]) -> tuple[str, str]:
     if len(y) < 2:
         return ("secondary", "Not enough history for a 5-minute comparison." if lang == "en" else "5분 변화 비교를 위한 데이터가 부족합니다.")
@@ -542,7 +558,7 @@ if pages[page] == "overview":
             else f"{T['what_matters_now']}: {short_text(sp_q, 96)}"
         )
         st.markdown(f"#### {hero}")
-        getattr(st, badge_style)(f"{T['confidence_risk']}: {badge_text}")
+        streamlit_notice(badge_style, f"{T['confidence_risk']}: {badge_text}")
 
         bullets = [
             (f"Spotlight market: {spotlight.get('market_id', '-')}" if lang == "en" else f"스포트라이트 마켓: {spotlight.get('market_id', '-') }"),
@@ -744,7 +760,7 @@ elif pages[page] == "detail":
 
                     st.write(f"### {T['live_change']}")
                     live_color, live_msg = compute_live_change(vals)
-                    getattr(st, live_color)(live_msg)
+                    streamlit_notice(live_color, live_msg)
                     if q90 and q10 and len(q90) >= 2 and len(q10) >= 2:
                         prev_w = q90[-2] - q10[-2]
                         now_w = q90[-1] - q10[-1]
@@ -761,7 +777,7 @@ elif pages[page] == "detail":
 
                     badge, reasons, badge_style = reliability_gate(selected.get("as_of_ts"), bool(fc.get("used_fallback")), width)
                     st.write(f"### {T['reliability_gate']}")
-                    getattr(st, badge_style)(badge)
+                    streamlit_notice(badge_style, badge)
                     with st.expander(T["why_this_badge"], expanded=False):
                         for r in reasons:
                             st.write(f"- {r}")
@@ -913,7 +929,7 @@ elif pages[page] == "compare":
                         width = tollama["0.9"][-1] - tollama["0.1"][-1]
                     badge, reasons, badge_style = reliability_gate(selected.get("as_of_ts"), bool(t_fallback), width)
                     st.write(f"### {T['reliability_gate']}")
-                    getattr(st, badge_style)(badge)
+                    streamlit_notice(badge_style, badge)
                     with st.expander(T["why_this_badge"], expanded=False):
                         for r in reasons:
                             st.write(f"- {r}")
@@ -932,7 +948,7 @@ elif pages[page] == "compare":
 
                     st.write(f"### {T['live_change']}")
                     lc, lm = compute_live_change(vals)
-                    getattr(st, lc)(lm)
+                    streamlit_notice(lc, lm)
 
                     st.write(f"### {T['quick_answers']}")
                     q1, q2, q3 = st.columns(3)

@@ -46,6 +46,12 @@ class PostmortemResponse(BaseModel):
     market_id: str
     content: str
     source_path: str
+    source: Optional[str] = None
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    reasons: List[str] = Field(default_factory=list)
+    resolved_at: Optional[datetime] = None
+    generated_at: Optional[datetime] = None
 
 
 class MarketDetailResponse(BaseModel):

@@ -143,6 +143,7 @@ ALERTS_FILE=""
 MARKETS_FILE=""
 MARKET_DETAIL_FILE=""
 MARKET_METRICS_FILE=""
+POSTMORTEM_FILE=""
 COMPARISON_FILE=""
 TSFM_FILE=""
 MARKET_ID=""
@@ -198,6 +199,15 @@ MARKET_METRICS_FILE="$API_CALL_OUT"
 if [[ -n "$MARKET_METRICS_FILE" && -s "$MARKET_METRICS_FILE" ]]; then
   alert_total="$(extract_json "$MARKET_METRICS_FILE" "alert_total" 2>/dev/null || echo "")"
   KEY_LINES+=("- market_metrics.alert_total: ${alert_total:-N/A}")
+fi
+
+api_call "postmortem_mkt90" GET "${API_BASE}/postmortem/mkt-90" "" no || true
+POSTMORTEM_FILE="$API_CALL_OUT"
+if [[ -n "$POSTMORTEM_FILE" && -s "$POSTMORTEM_FILE" ]]; then
+  pm_source="$(extract_json "$POSTMORTEM_FILE" "source" 2>/dev/null || echo "")"
+  pm_title="$(extract_json "$POSTMORTEM_FILE" "title" 2>/dev/null || echo "")"
+  [[ -n "$pm_source" ]] && KEY_LINES+=("- postmortem.mkt90.source: ${pm_source}")
+  [[ -n "$pm_title" ]] && KEY_LINES+=("- postmortem.mkt90.title: ${pm_title}")
 fi
 
 api_call "metrics" GET "${API_BASE}/metrics" "" no >/dev/null 2>&1 || true

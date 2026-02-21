@@ -112,6 +112,45 @@ except FileNotFoundError:
 _tsfm_guard = _TSFMInboundGuard.from_default_config()
 
 
+def _is_calibrated_market_id(market_id: str) -> bool:
+    return str(market_id or "").strip().lower().startswith("mkt-")
+
+
+def _build_postmortem_fallback(*, market_id: str) -> PostmortemResponse:
+    now = datetime.now(timezone.utc)
+    title = f"Postmortem {market_id}"
+    summary = "No explicit postmortem artifact was found; returning calibrated fallback for demo continuity."
+    reasons = [
+        "POSTMORTEM_MISSING",
+        "CALIBRATED_MARKET_FALLBACK",
+    ]
+    content = "\n".join(
+        [
+            f"# {title}",
+            "",
+            f"- source: fallback",
+            f"- generated_at: {now.isoformat()}",
+            "",
+            "## Summary",
+            summary,
+            "",
+            "## Reason Codes",
+            *(f"- {reason}" for reason in reasons),
+            "",
+        ]
+    )
+    return PostmortemResponse(
+        market_id=market_id,
+        content=content,
+        source_path="fallback://postmortem-missing",
+        source="fallback",
+        title=title,
+        summary=summary,
+        reasons=reasons,
+        generated_at=now,
+    )
+
+
 def _select_latest_postmortem_path(
     *,
     store: LocalDerivedStore,
@@ -267,6 +306,8 @@ def get_postmortem(
     except FileNotFoundError:
         latest_path = _select_latest_postmortem_path(store=store, market_id=market_id)
         if latest_path is None:
+            if _is_calibrated_market_id(market_id):
+                return _build_postmortem_fallback(market_id=market_id)
             raise HTTPException(
                 status_code=404,
                 detail=f"Postmortem not found: {market_id}",
@@ -278,6 +319,7 @@ def get_postmortem(
         market_id=market_id,
         content=content,
         source_path=str(source_path),
+        source="artifact",
     )
 
 

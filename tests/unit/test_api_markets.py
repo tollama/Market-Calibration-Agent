@@ -78,6 +78,23 @@ def test_markets_and_detail_and_metrics(monkeypatch, tmp_path):
     assert payload["alert_severity_counts"]["HIGH"] == 1
 
 
+def test_postmortem_missing_calibrated_market_returns_fallback(monkeypatch, tmp_path):
+    (tmp_path / "derived" / "reports" / "postmortem").mkdir(parents=True)
+    monkeypatch.setenv("DERIVED_DIR", str(tmp_path / "derived"))
+
+    client = TestClient(api_app.app)
+    response = client.get("/postmortem/mkt-90")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["market_id"] == "mkt-90"
+    assert payload["source"] == "fallback"
+    assert payload["source_path"] == "fallback://postmortem-missing"
+    assert payload["title"] == "Postmortem mkt-90"
+    assert payload["summary"]
+    assert "POSTMORTEM_MISSING" in payload["reasons"]
+
+
 def test_market_comparison_endpoint(monkeypatch):
     class StubService:
         def forecast(self, request):

@@ -362,11 +362,43 @@ def overlap_quantiles(block: dict[str, list[float]], quantiles: list[str]) -> tu
     return trimmed, min_len, len(set(lengths)) > 1
 
 
-def metric_value_with_meta(preferred: Any, meta_obj: Any, key: str) -> Any:
-    if preferred is not None:
-        return preferred
-    if isinstance(meta_obj, dict):
+def value_from_top_or_meta(payload: Any, key: str) -> Any:
+    if not isinstance(payload, dict):
+        return None
+    if key in payload:
+        return payload.get(key)
+    meta_obj = payload.get("meta")
+    if isinstance(meta_obj, dict) and key in meta_obj:
         return meta_obj.get(key)
+    return None
+
+
+def value_from_top_or_meta_aliases(payload: Any, keys: list[str]) -> Any:
+    if not isinstance(payload, dict):
+        return None
+    meta_obj = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    for key in keys:
+        if key in payload:
+            return payload.get(key)
+        if key in meta_obj:
+            return meta_obj.get(key)
+    return None
+
+
+def coerce_optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "off"}:
+            return False
     return None
 
 
@@ -1102,28 +1134,56 @@ elif pages[page] == "compare":
             def metric_or_na(v: float | None, reason: str) -> str:
                 return f"{v:.4f}" if (v is not None and math.isfinite(v)) else f"{T['metric_na']} ({reason})"
 
-            b_meta = baseline_full.get("meta", {}) if isinstance(baseline_full.get("meta", {}), dict) else {}
-            t_meta = tollama_full.get("meta", {}) if isinstance(tollama_full.get("meta", {}), dict) else {}
-
-            b_latency_raw = metric_value_with_meta(baseline_full.get("latency_ms"), b_meta, "latency_ms")
+            b_latency_raw = value_from_top_or_meta(baseline_full, "latency_ms")
             if b_latency_raw is None:
                 b_latency_raw = cmp_result.get("baseline_latency_ms")
-            t_latency_raw = metric_value_with_meta(tollama_full.get("latency_ms"), t_meta, "latency_ms")
+            t_latency_raw = value_from_top_or_meta(tollama_full, "latency_ms")
             if t_latency_raw is None:
                 t_latency_raw = cmp_result.get("tollama_latency_ms")
             b_latency = _coerce_float(b_latency_raw)
             t_latency = _coerce_float(t_latency_raw)
 
-            b_fallback_raw = metric_value_with_meta(baseline_full.get("used_fallback"), b_meta, "used_fallback")
-            t_fallback_raw = metric_value_with_meta(tollama_full.get("used_fallback"), t_meta, "used_fallback")
-            b_fallback = b_fallback_raw if isinstance(b_fallback_raw, bool) else None
-            t_fallback = t_fallback_raw if isinstance(t_fallback_raw, bool) else None
+            b_runtime_raw = value_from_top_or_meta(baseline_full, "runtime")
+            t_runtime_raw = value_from_top_or_meta(tollama_full, "runtime")
+
+            b_fallback_raw = value_from_top_or_meta_aliases(baseline_full, ["used_fallback", "fallback_used"])
+            t_fallback_raw = value_from_top_or_meta_aliases(tollama_full, ["used_fallback", "fallback_used"])
+            b_fallback = coerce_optional_bool(b_fallback_raw)
+            t_fallback = coerce_optional_bool(t_fallback_raw)
+
+            def latency_text(latency_ms: float | None, runtime_raw: Any) -> str:
+                if latency_ms is not None:
+                    return f"{float(latency_ms):.1f}ms"
+                runtime = _coerce_float(runtime_raw)
+                if runtime is not None:
+                    return f"{runtime:.3f}s"
+                return f"{T['metric_na']} ({T['na_not_provided']})"
 
             reason = T["na_short_window"]
             board = pd.DataFrame(
                 [
-                    {"model": "Baseline", "MAE": metric_or_na(b_metrics["mae"], reason), "MAPE": metric_or_na(b_metrics["mape"], reason), "MASE": metric_or_na(b_metrics["mase"], reason), "Pinball q10": metric_or_na(b_metrics["pinball_0.1"], reason), "Pinball q50": metric_or_na(b_metrics["pinball_0.5"], reason), "Pinball q90": metric_or_na(b_metrics["pinball_0.9"], reason), T["latency"]: f"{float(b_latency):.1f}ms" if b_latency is not None else f"{T['metric_na']} ({T['na_not_provided']})", T["fallback_status"]: ("ON" if b_fallback else "OFF") if b_fallback is not None else f"{T['metric_na']} ({T['na_not_provided']})"},
-                    {"model": "Tollama", "MAE": metric_or_na(t_metrics["mae"], reason), "MAPE": metric_or_na(t_metrics["mape"], reason), "MASE": metric_or_na(t_metrics["mase"], reason), "Pinball q10": metric_or_na(t_metrics["pinball_0.1"], reason), "Pinball q50": metric_or_na(t_metrics["pinball_0.5"], reason), "Pinball q90": metric_or_na(t_metrics["pinball_0.9"], reason), T["latency"]: f"{float(t_latency):.1f}ms" if t_latency is not None else f"{T['metric_na']} ({T['na_not_provided']})", T["fallback_status"]: ("ON" if t_fallback else "OFF") if t_fallback is not None else f"{T['metric_na']} ({T['na_not_provided']})"},
+                    {
+                        "model": "Baseline",
+                        "MAE": metric_or_na(b_metrics["mae"], reason),
+                        "MAPE": metric_or_na(b_metrics["mape"], reason),
+                        "MASE": metric_or_na(b_metrics["mase"], reason),
+                        "Pinball q10": metric_or_na(b_metrics["pinball_0.1"], reason),
+                        "Pinball q50": metric_or_na(b_metrics["pinball_0.5"], reason),
+                        "Pinball q90": metric_or_na(b_metrics["pinball_0.9"], reason),
+                        T["latency"]: latency_text(b_latency, b_runtime_raw),
+                        T["fallback_status"]: ("ON" if b_fallback else "OFF") if b_fallback is not None else f"{T['metric_na']} ({T['na_not_provided']})",
+                    },
+                    {
+                        "model": "Tollama",
+                        "MAE": metric_or_na(t_metrics["mae"], reason),
+                        "MAPE": metric_or_na(t_metrics["mape"], reason),
+                        "MASE": metric_or_na(t_metrics["mase"], reason),
+                        "Pinball q10": metric_or_na(t_metrics["pinball_0.1"], reason),
+                        "Pinball q50": metric_or_na(t_metrics["pinball_0.5"], reason),
+                        "Pinball q90": metric_or_na(t_metrics["pinball_0.9"], reason),
+                        T["latency"]: latency_text(t_latency, t_runtime_raw),
+                        T["fallback_status"]: ("ON" if t_fallback else "OFF") if t_fallback is not None else f"{T['metric_na']} ({T['na_not_provided']})",
+                    },
                 ]
             )
             st.write(f"### {T['holdout_eval']}")

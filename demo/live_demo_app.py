@@ -29,6 +29,12 @@ I18N = {
         "overview_help": "Use trust, alerts, and segment signals together. Single metrics can be noisy.",
         "trust_card": "Trust score combines calibration quality and alert context.",
         "uncertainty_card": "Wider q10-q90 bands indicate higher forecast uncertainty.",
+        "help_label": "What does this mean?",
+        "overview_kpi_help": "Markets shows how many markets are tracked now. Avg trust is overall reliability (higher is better). High alerts are priority issues to check first.",
+        "overview_trust_alert_help": "Trust table ranks markets by confidence. Alerts chart shows where risks are concentrated by severity.",
+        "detail_forecast_help": "q50 is the most typical path. q10 and q90 are lower/upper likely bounds. A wider gap means less certainty.",
+        "compare_help": "Baseline is fallback logic. Tollama is the model path. Δ q50 is the median difference at the last step (near 0 = similar).",
+        "obs_help": "Requests = total forecast calls. Error rate = failed call share. Fallback = backup path used when primary fails. Cache hit rate = reused results share.",
     },
     "kr": {
         "app_title": "📊 마켓 캘리브레이션 LIVE 데모 v2",
@@ -44,6 +50,12 @@ I18N = {
         "overview_help": "신뢰점수, 경보, 세그먼트 신호를 함께 보세요. 단일 지표는 노이즈가 있을 수 있습니다.",
         "trust_card": "신뢰점수는 캘리브레이션 품질과 경보 맥락을 함께 반영합니다.",
         "uncertainty_card": "q10-q90 구간 폭이 넓을수록 예측 불확실성이 큽니다.",
+        "help_label": "이 결과가 의미하는 것",
+        "overview_kpi_help": "Markets는 현재 추적 중인 마켓 수입니다. Avg trust는 전체 신뢰도(높을수록 좋음)이고, High alerts는 우선 확인이 필요한 이슈 수입니다.",
+        "overview_trust_alert_help": "신뢰 테이블은 마켓을 신뢰도 순으로 보여줍니다. 경보 차트는 심각도별로 위험이 어디에 몰렸는지 보여줍니다.",
+        "detail_forecast_help": "q50은 가장 대표적인 경로입니다. q10/q90은 하단/상단 가능 범위입니다. 간격이 넓을수록 확신이 낮습니다.",
+        "compare_help": "Baseline은 기본(대체) 로직, Tollama는 모델 예측입니다. Δ q50은 마지막 시점 중앙값 차이(0에 가까우면 유사)입니다.",
+        "obs_help": "Requests는 총 예측 호출 수, Error rate는 실패 비율, Fallback은 기본 경로로 대체된 횟수, Cache hit rate는 재사용된 결과 비율입니다.",
     },
 }
 
@@ -118,6 +130,20 @@ def parse_prom_metrics(text: str) -> dict[str, float]:
     return parsed
 
 
+def info_toggle(key: str, text: str) -> None:
+    state_key = f"info_toggle_{key}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = False
+
+    left, right = st.columns([0.95, 0.05])
+    left.caption(T["help_label"])
+    if right.button("ℹ️", key=f"btn_{state_key}"):
+        st.session_state[state_key] = not st.session_state[state_key]
+
+    if st.session_state[state_key]:
+        st.info(text)
+
+
 if pages[page] == "overview":
     scoreboard, sc_err = safe_get("/scoreboard?window=90d")
     alerts, al_err = safe_get("/alerts?limit=50")
@@ -139,6 +165,7 @@ if pages[page] == "overview":
         c1.metric("Markets", market_count)
         c2.metric("Avg trust", "-" if math.isnan(avg_trust) else f"{avg_trust:.3f}")
         c3.metric("High alerts", high_alerts)
+        info_toggle("overview_kpi", T["overview_kpi_help"])
 
         st.info(T["overview_help"])
 
@@ -162,6 +189,8 @@ if pages[page] == "overview":
                 st.bar_chart(sev)
             else:
                 st.caption("No alerts.")
+
+        info_toggle("overview_trust_alert", T["overview_trust_alert_help"])
 
         st.write("### Trust / Uncertainty Explainability")
         ex1, ex2 = st.columns(2)
@@ -225,6 +254,7 @@ elif pages[page] == "detail":
                         fc_df["q90"] = q90[: len(horizon)]
 
                         st.write("### Forecast (q10 / q50 / q90)")
+                        info_toggle("detail_forecast", T["detail_forecast_help"])
                         st.line_chart(fc_df.set_index("step"))
                         st.dataframe(fc_df, use_container_width=True)
 
@@ -314,6 +344,8 @@ elif pages[page] == "compare":
                             else:
                                 st.error(f"Δ q50: {d50:+.4f} (large)")
 
+                        info_toggle("compare", T["compare_help"])
+
                         st.write("### Explainability")
                         st.info("Compare baseline fallback and tollama path; use Δq50 + interval width to judge trust.")
 
@@ -331,16 +363,19 @@ elif pages[page] == "obs":
         lat_cnt = parsed.get("tsfm_latency_seconds_count", 0.0)
         cache_hit = parsed.get("tsfm_cache_hits_total", 0.0)
         cache_miss = parsed.get("tsfm_cache_misses_total", 0.0)
+        fallback = parsed.get("tsfm_fallback_total", 0.0)
 
         avg_latency = (lat_sum / lat_cnt) if lat_cnt > 0 else 0.0
         err_rate = (err / req) if req > 0 else 0.0
         hit_rate = (cache_hit / (cache_hit + cache_miss)) if (cache_hit + cache_miss) > 0 else 0.0
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Requests", int(req))
         c2.metric("Error rate", f"{err_rate:.2%}")
-        c3.metric("Avg latency", f"{avg_latency:.3f}s")
-        c4.metric("Cache hit rate", f"{hit_rate:.2%}")
+        c3.metric("Fallback", int(fallback))
+        c4.metric("Avg latency", f"{avg_latency:.3f}s")
+        c5.metric("Cache hit rate", f"{hit_rate:.2%}")
+        info_toggle("obs", T["obs_help"])
 
         st.write("### Parsed metric summaries")
         if parsed:

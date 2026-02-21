@@ -306,10 +306,41 @@ def is_calibrated_market_id(market_id: Any) -> bool:
     return str(market_id or "").strip().lower().startswith("mkt-")
 
 def parse_series(series_text: str) -> list[float]:
-    vals = [float(v.strip()) for v in series_text.split(",") if v.strip()]
-    if not vals or any(math.isnan(v) or v < 0 or v > 1 for v in vals):
+    vals: list[float] = []
+    for raw in (series_text or "").split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        coerced = _coerce_float(token)
+        if coerced is None or coerced < 0 or coerced > 1:
+            raise ValueError("invalid series")
+        vals.append(coerced)
+    if not vals:
         raise ValueError("invalid series")
     return vals
+
+
+def coerce_prob_series(values: Any, *, limit: int = 256) -> list[float]:
+    if not isinstance(values, list):
+        return []
+    out: list[float] = []
+    for v in values[:limit]:
+        fv = _coerce_float(v)
+        if fv is not None and 0 <= fv <= 1:
+            out.append(fv)
+    return out
+
+
+def sanitize_quantile_series(values: Any) -> list[float]:
+    if not isinstance(values, list):
+        return []
+    out: list[float] = []
+    for v in values:
+        fv = _coerce_float(v)
+        if fv is None:
+            continue
+        out.append(fv)
+    return out
 
 
 def parse_prom_metrics(text: str) -> dict[str, float]:
@@ -751,8 +782,8 @@ elif pages[page] == "detail":
             d2.metric("Category", detail.get("category") or "-")
             d3.metric("Liquidity", detail.get("liquidity_bucket") or "-")
 
-        default_y = selected.get("y") if isinstance(selected.get("y"), list) else []
-        default_y_text = ",".join(f"{float(v):.4f}".rstrip("0").rstrip(".") for v in default_y[:128])
+        default_y = coerce_prob_series(selected.get("y"), limit=128)
+        default_y_text = ",".join(f"{v:.4f}".rstrip("0").rstrip(".") for v in default_y[:128])
         if not default_y_text:
             default_y_text = "0.45,0.46,0.47,0.48,0.49,0.50,0.52,0.51,0.53,0.54"
 
@@ -770,6 +801,8 @@ elif pages[page] == "detail":
             except ValueError:
                 st.warning(T["invalid_series"])
                 vals = []
+                if market_id in detail_state:
+                    detail_state[market_id]["stale_warning"] = "Input parsing failed on latest rerun. Showing previous result."
 
             if vals:
                 payload = {
@@ -784,11 +817,14 @@ elif pages[page] == "detail":
                 if fc_err:
                     st.error(T["safe_api_error"])
                     st.caption(f"forecast={fc_err}")
+                    if market_id in detail_state:
+                        detail_state[market_id]["stale_warning"] = f"Latest rerun failed ({fc_err}). Showing previous result."
                 else:
                     detail_state[market_id] = {
                         "vals": vals,
                         "forecast": fc,
                         "as_of_ts": selected.get("as_of_ts"),
+                        "stale_warning": None,
                     }
                     detail_answers[market_id] = {}
 
@@ -796,22 +832,40 @@ elif pages[page] == "detail":
         if not saved_detail:
             st.caption("Run forecast to see results and quick answers." if lang == "en" else "예측 실행 후 결과와 빠른 질문 답변이 표시됩니다.")
         else:
-            vals = saved_detail.get("vals", [])
-            fc = saved_detail.get("forecast", {})
-            yhat = fc.get("yhat_q", {})
-            q10 = yhat.get("0.1", [])
-            q50 = yhat.get("0.5", [])
-            q90 = yhat.get("0.9", [])
-            horizon = list(range(1, max(len(q10), len(q50), len(q90)) + 1))
-            fc_df = pd.DataFrame({"step": horizon})
-            fc_df["q10"] = q10[: len(horizon)]
-            fc_df["q50"] = q50[: len(horizon)]
-            fc_df["q90"] = q90[: len(horizon)]
+            stale_warning = str(saved_detail.get("stale_warning") or "").strip()
+            if stale_warning:
+                st.caption(f"⚠️ {stale_warning}")
 
-            st.write("### Forecast (q10 / q50 / q90)")
-            info_toggle("detail_forecast", T["detail_forecast_help"])
-            st.line_chart(fc_df.set_index("step"))
-            st.dataframe(fc_df, use_container_width=True)
+            vals = coerce_prob_series(saved_detail.get("vals", []), limit=512)
+            fc = saved_detail.get("forecast", {}) if isinstance(saved_detail.get("forecast", {}), dict) else {}
+            yhat = fc.get("yhat_q", {}) if isinstance(fc.get("yhat_q", {}), dict) else {}
+            q10_raw = sanitize_quantile_series(yhat.get("0.1", []))
+            q50_raw = sanitize_quantile_series(yhat.get("0.5", []))
+            q90_raw = sanitize_quantile_series(yhat.get("0.9", []))
+
+            lens = [len(q10_raw), len(q50_raw), len(q90_raw)]
+            min_len = min(lens) if all(l > 0 for l in lens) else 0
+            q_len_mismatch = len(set(lens)) > 1 and min_len > 0
+
+            if min_len <= 0:
+                st.write("### Forecast (q10 / q50 / q90)")
+                info_toggle("detail_forecast", T["detail_forecast_help"])
+                st.caption("Forecast quantiles unavailable or invalid." if lang == "en" else "예측 분위수 데이터가 없거나 유효하지 않습니다.")
+                q10, q50, q90 = [], [], []
+                fc_df = pd.DataFrame(columns=["step", "q10", "q50", "q90"])
+            else:
+                q10 = q10_raw[:min_len]
+                q50 = q50_raw[:min_len]
+                q90 = q90_raw[:min_len]
+                horizon = list(range(1, min_len + 1))
+                fc_df = pd.DataFrame({"step": horizon, "q10": q10, "q50": q50, "q90": q90})
+
+                st.write("### Forecast (q10 / q50 / q90)")
+                info_toggle("detail_forecast", T["detail_forecast_help"])
+                if q_len_mismatch:
+                    st.caption("Quantile length mismatch detected; trimmed to shortest series." if lang == "en" else "분위수 길이 불일치로 가장 짧은 길이에 맞춰 표시합니다.")
+                st.line_chart(fc_df.set_index("step"))
+                st.dataframe(fc_df, use_container_width=True)
 
             width = None
             if q10 and q90 and q50:
@@ -846,14 +900,16 @@ elif pages[page] == "detail":
                     st.write(f"- {r}")
 
             st.write(f"### {T['so_what']}")
+            last_obs = vals[-1] if vals else None
+            direction_up = bool(q50 and last_obs is not None and q50[-1] >= last_obs)
             conclusion = (
-                f"Expected direction: {'up' if q50 and q50[-1] >= vals[-1] else 'down'} (confidence: {'high' if (width or 1) < 0.12 else 'moderate'})."
+                f"Expected direction: {'up' if direction_up else 'down'} (confidence: {'high' if (width or 1) < 0.12 else 'moderate'})."
                 if lang == "en"
-                else f"예상 방향: {'상승' if q50 and q50[-1] >= vals[-1] else '하락'} (신뢰도: {'높음' if (width or 1) < 0.12 else '보통'})."
+                else f"예상 방향: {'상승' if direction_up else '하락'} (신뢰도: {'높음' if (width or 1) < 0.12 else '보통'})."
             )
             st.info(conclusion)
             bullets = [
-                (f"Last observed value: {vals[-1]:.3f}" if lang == "en" else f"최근 관측값: {vals[-1]:.3f}"),
+                (f"Last observed value: {last_obs:.3f}" if (lang == "en" and last_obs is not None) else (f"최근 관측값: {last_obs:.3f}" if last_obs is not None else T["na_reason"])),
                 (f"Forecast median (last step): {q50[-1]:.3f}" if q50 else T["na_reason"]),
                 (f"Uncertainty width: {width:.3f}" if width is not None else T["na_reason"]),
             ]
@@ -886,6 +942,9 @@ elif pages[page] == "detail":
         if not pm_err and pm:
             with st.expander("Latest Postmortem", expanded=False):
                 st.markdown(pm.get("content", ""))
+        elif pm_err == "HTTP 404" and is_calibrated_market_id(market_id):
+            with st.expander("Latest Postmortem", expanded=False):
+                st.caption("No postmortem available yet for this calibrated market." if lang == "en" else "이 캘리브레이션 마켓의 포스트모템이 아직 없습니다.")
 
 elif pages[page] == "compare":
     sample_items = load_sample_markets()
@@ -911,8 +970,8 @@ elif pages[page] == "compare":
         selected = labels[selected_label]
         market_id = str(selected.get("market_id"))
 
-        default_y = selected.get("y") if isinstance(selected.get("y"), list) else []
-        default_y_text = ",".join(f"{float(v):.4f}".rstrip("0").rstrip(".") for v in default_y[:128])
+        default_y = coerce_prob_series(selected.get("y"), limit=128)
+        default_y_text = ",".join(f"{v:.4f}".rstrip("0").rstrip(".") for v in default_y[:128])
         if not default_y_text:
             default_y_text = "0.41,0.42,0.43,0.44,0.45,0.46,0.47,0.48,0.49,0.50"
 
@@ -1067,24 +1126,48 @@ elif pages[page] == "obs":
         st.error(T["safe_api_error"])
     else:
         parsed = parse_prom_metrics(metrics_text.text)
-        req = parsed.get("tsfm_requests_total", 0.0)
-        err = parsed.get("tsfm_errors_total", 0.0)
-        lat_sum = parsed.get("tsfm_latency_seconds_sum", 0.0)
-        lat_cnt = parsed.get("tsfm_latency_seconds_count", 0.0)
-        cache_hit = parsed.get("tsfm_cache_hits_total", 0.0)
-        cache_miss = parsed.get("tsfm_cache_misses_total", 0.0)
-        fallback = parsed.get("tsfm_fallback_total", 0.0)
 
-        avg_latency = (lat_sum / lat_cnt) if lat_cnt > 0 else 0.0
+        def first_metric(*names: str) -> float | None:
+            for name in names:
+                v = _coerce_float(parsed.get(name))
+                if v is not None:
+                    return v
+            return None
+
+        req = first_metric("tsfm_request_total", "tsfm_requests_total") or 0.0
+        err = first_metric("tsfm_errors_total") or 0.0
+
+        lat_ms_sum = first_metric("tsfm_request_latency_ms_sum")
+        lat_ms_cnt = first_metric("tsfm_request_latency_ms_count")
+        lat_s_sum = first_metric("tsfm_latency_seconds_sum")
+        lat_s_cnt = first_metric("tsfm_latency_seconds_count")
+
+        avg_latency_s: float | None = None
+        if lat_ms_sum is not None and lat_ms_cnt is not None and lat_ms_cnt > 0:
+            avg_latency_s = (lat_ms_sum / lat_ms_cnt) / 1000.0
+        elif lat_s_sum is not None and lat_s_cnt is not None and lat_s_cnt > 0:
+            avg_latency_s = lat_s_sum / lat_s_cnt
+
+        cache_hit = first_metric("tsfm_cache_hit_total", "tsfm_cache_hits_total") or 0.0
+        cache_miss = first_metric("tsfm_cache_miss_total", "tsfm_cache_misses_total")
+        fallback = first_metric("tsfm_fallback_total") or 0.0
+
         err_rate = (err / req) if req > 0 else 0.0
-        hit_rate = (cache_hit / (cache_hit + cache_miss)) if (cache_hit + cache_miss) > 0 else 0.0
+        hit_rate: float | None = None
+        hit_rate_reason: str | None = None
+        if cache_miss is None:
+            hit_rate_reason = "miss metric not provided"
+        elif (cache_hit + cache_miss) <= 0:
+            hit_rate_reason = "no cache events"
+        else:
+            hit_rate = cache_hit / (cache_hit + cache_miss)
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Requests", int(req))
         c2.metric("Error rate", f"{err_rate:.2%}")
-        c3.metric("Fallback", int(fallback))
-        c4.metric("Avg latency", f"{avg_latency:.3f}s")
-        c5.metric("Cache hit rate", f"{hit_rate:.2%}")
+        c3.metric("Fallback (cumulative)", int(fallback))
+        c4.metric("Avg latency", f"{avg_latency_s:.3f}s" if avg_latency_s is not None else T["metric_na"])
+        c5.metric("Cache hit rate", f"{hit_rate:.2%}" if hit_rate is not None else f"{T['metric_na']} ({hit_rate_reason or T['na_not_provided']})")
         info_toggle("obs", T["obs_help"])
 
         st.write("### Parsed metric summaries")

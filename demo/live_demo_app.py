@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import httpx
 import streamlit as st
 
+from demo.live_demo_kpi_overlay import render_kpi_panel
+
 API_BASE = os.getenv("LIVE_DEMO_API_BASE", "http://127.0.0.1:8000")
 
 st.set_page_config(page_title="Market Calibration LIVE Demo", layout="wide")
@@ -111,5 +113,9 @@ elif page == KR_EN["compare"]:
 elif page == KR_EN["obs"]:
     st.subheader("Metrics Summary")
     metrics_text = httpx.get(f"{API_BASE}/metrics", timeout=10.0).text
+
+    # KPI overlay: user-friendly operational counters + KPI definitions
+    render_kpi_panel(metrics_text)
+
     lines = [line for line in metrics_text.splitlines() if line and not line.startswith("#")]
     st.code("\n".join(lines[:80]))

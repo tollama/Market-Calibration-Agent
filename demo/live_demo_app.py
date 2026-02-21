@@ -489,10 +489,17 @@ def build_top_movers_df(items: list[dict[str, Any]], top_n: int) -> pd.DataFrame
     return df.reset_index(drop=True)
 
 
+def trust_for_thresholds(avg_trust: float) -> float:
+    if math.isnan(avg_trust):
+        return avg_trust
+    return avg_trust / 100.0 if avg_trust > 1 else avg_trust
+
+
 def wow_badge(avg_trust: float, high_alerts: int) -> tuple[str, str, str]:
-    if not math.isnan(avg_trust) and avg_trust >= 0.72 and high_alerts <= 2:
+    trust_value = trust_for_thresholds(avg_trust)
+    if not math.isnan(trust_value) and trust_value >= 0.72 and high_alerts <= 2:
         return ("🟢 Green", "success", "steady") if lang == "en" else ("🟢 Green", "success", "안정")
-    if (not math.isnan(avg_trust) and avg_trust >= 0.55) and high_alerts <= 6:
+    if (not math.isnan(trust_value) and trust_value >= 0.55) and high_alerts <= 6:
         return ("🟡 Yellow", "warning", "watch") if lang == "en" else ("🟡 Yellow", "warning", "주의")
     return ("🔴 Red", "error", "elevated") if lang == "en" else ("🔴 Red", "error", "높음")
 
@@ -535,7 +542,7 @@ if pages[page] == "overview":
 
     market_count = len(score_df)
     avg_trust = float(score_df["trust_score"].dropna().mean()) if "trust_score" in score_df else float("nan")
-    high_alerts = int((alert_df["severity"] == "high").sum()) if "severity" in alert_df else 0
+    high_alerts = int((alert_df["severity"].astype(str).str.upper() == "HIGH").sum()) if "severity" in alert_df else 0
 
     if impact_mode:
         st.write(f"### {T['wow_center']}")
@@ -599,14 +606,15 @@ if pages[page] == "overview":
                 )
             st.info(pulse_txt)
         with tab2:
+            trust_value = trust_for_thresholds(avg_trust)
             edge_txt = (
-                f"Model edge looks {'healthy' if not math.isnan(avg_trust) and avg_trust >= 0.65 else 'fragile'} with average trust {avg_trust:.3f}."
+                f"Model edge looks {'healthy' if not math.isnan(trust_value) and trust_value >= 0.65 else 'fragile'} with average trust {avg_trust:.3f}."
                 if not math.isnan(avg_trust)
                 else "Model edge is unclear because trust data is limited."
             )
             if lang == "kr":
                 edge_txt = (
-                    f"평균 신뢰도 {avg_trust:.3f} 기준 모델 우위는 {'양호' if not math.isnan(avg_trust) and avg_trust >= 0.65 else '취약'}합니다."
+                    f"평균 신뢰도 {avg_trust:.3f} 기준 모델 우위는 {'양호' if not math.isnan(trust_value) and trust_value >= 0.65 else '취약'}합니다."
                     if not math.isnan(avg_trust)
                     else "신뢰도 데이터가 제한되어 모델 우위를 판단하기 어렵습니다."
                 )

@@ -51,13 +51,15 @@ API_PORT=18000 GUI_PORT=18501 HEALTH_TIMEOUT_SEC=45 ./scripts/run_live_demo.sh
 ```
 
 ## Demo Script (Presenter Flow)
-1. **Overview** 탭에서 `/scoreboard`, `/alerts` 확인
-2. **Market Detail** 탭에서 시장 선택 → q10/q50/q90 forecast 확인
-3. 같은 화면에서 최신 postmortem 확인
-4. **Compare** 탭에서 baseline vs tollama 비교 실행
-5. **Observability** 탭에서 `/metrics` 요약 확인
+1. 사이드바에서 **Language (KR/EN)** 선택
+2. **Overview** 탭에서 KPI 카드(시장 수/평균 trust/high alerts) + trust/alerts 차트 확인
+3. **Market Detail** 탭에서 시장 선택 → q10/q50/q90 라인차트 + 신뢰/불확실성 설명 카드 확인
+4. 같은 화면에서 최신 postmortem(expander) 확인
+5. **Compare** 탭에서 baseline vs tollama 마지막 스텝 비교표(quantile별) + Δq50 배지 확인
+6. **Observability** 탭에서 `/metrics` 파싱 요약 카드(requests/error rate/latency/cache) 확인
 
 ## Notes
-- 안전 문구: "투자 조언이 아닙니다 / Not investment advice"
-- `/tsfm/forecast`는 기존 canonical endpoint 유지
+- 안전 문구("투자 조언이 아닙니다 / Not investment advice")는 상단 + 사이드바에 항상 표시
+- `/tsfm/forecast` canonical endpoint와 `/markets*` endpoint군 유지
+- API 오류/네트워크 오류 시 사용자 안전 문구로 graceful fallback 처리
 - 비교 endpoint는 내부적으로 동일 forecast service를 재사용

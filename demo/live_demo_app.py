@@ -44,6 +44,23 @@ I18N = {
         "top_n_markets": "Top N markets",
         "top_markets_title": "Top markets",
         "top_markets_help": "Top list by latest YES price.",
+        "so_what": "So what?",
+        "evidence": "Evidence",
+        "confidence": "Confidence / Caution",
+        "reliability_gate": "Reliability Gate",
+        "why_this_badge": "Why this badge?",
+        "live_change": "Live change",
+        "battleboard": "Baseline vs Tollama battleboard",
+        "holdout_eval": "Light holdout evaluation",
+        "na_reason": "N/A (insufficient data)",
+        "question_why": "Why important?",
+        "question_risk": "Current risk?",
+        "question_summary": "One-line summary",
+        "quick_answers": "Quick questions",
+        "metric_na": "N/A",
+        "fallback_status": "Fallback",
+        "latency": "Latency",
+        "freshness": "Freshness",
     },
     "kr": {
         "app_title": "📊 마켓 캘리브레이션 LIVE 데모 v2",
@@ -71,6 +88,23 @@ I18N = {
         "top_n_markets": "상위 N개 마켓",
         "top_markets_title": "상위 마켓",
         "top_markets_help": "최신 YES 가격 기준 상위 목록입니다.",
+        "so_what": "핵심 요약",
+        "evidence": "근거",
+        "confidence": "확신 / 주의",
+        "reliability_gate": "신뢰성 게이트",
+        "why_this_badge": "이 배지 이유",
+        "live_change": "실시간 변화",
+        "battleboard": "Baseline vs Tollama 배틀보드",
+        "holdout_eval": "간단 홀드아웃 평가",
+        "na_reason": "N/A (데이터 부족)",
+        "question_why": "왜 중요한가요?",
+        "question_risk": "현재 리스크는?",
+        "question_summary": "한 줄 요약",
+        "quick_answers": "빠른 질문",
+        "metric_na": "N/A",
+        "fallback_status": "대체 경로",
+        "latency": "지연시간",
+        "freshness": "신선도",
     },
 }
 
@@ -225,6 +259,111 @@ def parse_prom_metrics(text: str) -> dict[str, float]:
             continue
         parsed[key] = parsed.get(key, 0.0) + val
     return parsed
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def compute_live_change(y: list[float]) -> tuple[str, str]:
+    if len(y) < 2:
+        return ("secondary", "Not enough history to compare with 5 minutes ago." if lang == "en" else "5분 전과 비교할 히스토리가 부족합니다.")
+    now_v = y[-1]
+    prev_v = y[-2]
+    delta = now_v - prev_v
+    if abs(delta) < 0.002:
+        return ("secondary", (f"Now is flat vs 5 min ago ({now_v:.3f})." if lang == "en" else f"현재 값은 5분 전 대비 보합입니다 ({now_v:.3f})."))
+    direction = "up" if delta > 0 else "down"
+    color = "success" if delta > 0 else "error"
+    msg = (
+        f"Now is {direction} by {delta:+.3f} vs 5 min ago."
+        if lang == "en"
+        else f"현재 값은 5분 전 대비 {delta:+.3f} {'상승' if delta > 0 else '하락'}했습니다."
+    )
+    return color, msg
+
+
+def calc_metrics(actual: list[float], pred: list[float], train: list[float]) -> dict[str, float | None]:
+    if not actual or not pred or len(actual) != len(pred):
+        return {"mae": None, "mape": None, "mase": None, "pinball_0.1": None, "pinball_0.5": None, "pinball_0.9": None}
+    n = len(actual)
+    abs_err = [abs(a - p) for a, p in zip(actual, pred)]
+    mae = sum(abs_err) / n
+    mape_vals = [abs((a - p) / a) for a, p in zip(actual, pred) if abs(a) > 1e-8]
+    mape = (sum(mape_vals) / len(mape_vals)) if mape_vals else None
+    naive_scale = None
+    if len(train) > 1:
+        diffs = [abs(train[i] - train[i - 1]) for i in range(1, len(train))]
+        naive_scale = (sum(diffs) / len(diffs)) if diffs else None
+    mase = (mae / naive_scale) if naive_scale and naive_scale > 1e-8 else None
+
+    def pinball(q: float) -> float:
+        vals = []
+        for a, p in zip(actual, pred):
+            e = a - p
+            vals.append(max(q * e, (q - 1) * e))
+        return sum(vals) / len(vals)
+
+    return {
+        "mae": mae,
+        "mape": mape,
+        "mase": mase,
+        "pinball_0.1": pinball(0.1),
+        "pinball_0.5": pinball(0.5),
+        "pinball_0.9": pinball(0.9),
+    }
+
+
+def reliability_gate(as_of_ts: Any, used_fallback: bool, width: float | None) -> tuple[str, list[str], str]:
+    reasons: list[str] = []
+    score = 0
+    dt = _parse_dt(as_of_ts)
+    freshness_min = None
+    if dt is not None:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        freshness_min = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+    if freshness_min is None:
+        score += 1
+        reasons.append(T["freshness"] + ": " + ("unknown" if lang == "en" else "알 수 없음"))
+    elif freshness_min > 30:
+        score += 2
+        reasons.append(T["freshness"] + f": {freshness_min:.0f}m old")
+    elif freshness_min > 10:
+        score += 1
+        reasons.append(T["freshness"] + f": {freshness_min:.0f}m old")
+
+    if used_fallback:
+        score += 2
+        reasons.append(T["fallback_status"] + ": ON")
+
+    if width is None:
+        score += 1
+        reasons.append("Uncertainty width: unknown" if lang == "en" else "불확실성 폭: 알 수 없음")
+    elif width > 0.20:
+        score += 2
+        reasons.append((f"Uncertainty width {width:.3f} (wide)" if lang == "en" else f"불확실성 폭 {width:.3f} (넓음)"))
+    elif width > 0.12:
+        score += 1
+        reasons.append((f"Uncertainty width {width:.3f} (medium)" if lang == "en" else f"불확실성 폭 {width:.3f} (보통)"))
+
+    if score <= 1:
+        return ("🟢 Green" if lang == "en" else "🟢 녹색", reasons or (["Healthy signals" if lang == "en" else "신호 양호"]), "success")
+    if score <= 3:
+        return ("🟡 Yellow" if lang == "en" else "🟡 노랑", reasons, "warning")
+    return ("🔴 Red" if lang == "en" else "🔴 빨강", reasons, "error")
 
 
 def info_toggle(key: str, text: str) -> None:
@@ -411,12 +550,58 @@ elif pages[page] == "detail":
                     st.line_chart(fc_df.set_index("step"))
                     st.dataframe(fc_df, use_container_width=True)
 
+                    width = None
                     if q10 and q90 and q50:
                         width = q90[-1] - q10[-1]
                         st.write("### Explainability")
                         e1, e2 = st.columns(2)
                         e1.info(f"Median path (q50) last step: {q50[-1]:.3f}")
                         e2.warning(f"Uncertainty width (q90-q10) last step: {width:.3f}")
+
+                    st.write(f"### {T['live_change']}")
+                    live_color, live_msg = compute_live_change(vals)
+                    getattr(st, live_color)(live_msg)
+                    if q90 and q10 and len(q90) >= 2 and len(q10) >= 2:
+                        prev_w = q90[-2] - q10[-2]
+                        now_w = q90[-1] - q10[-1]
+                        wmsg = (
+                            "Uncertainty is widening." if now_w - prev_w > 0.01 else "Uncertainty is narrowing." if prev_w - now_w > 0.01 else "Uncertainty is stable."
+                        )
+                        if lang == "kr":
+                            wmsg = "불확실성이 확대되고 있습니다." if now_w - prev_w > 0.01 else "불확실성이 축소되고 있습니다." if prev_w - now_w > 0.01 else "불확실성은 안정적입니다."
+                        st.caption(wmsg)
+
+                    badge, reasons, badge_style = reliability_gate(selected.get("as_of_ts"), bool(fc.get("used_fallback")), width)
+                    st.write(f"### {T['reliability_gate']}")
+                    getattr(st, badge_style)(badge)
+                    with st.expander(T["why_this_badge"], expanded=False):
+                        for r in reasons:
+                            st.write(f"- {r}")
+
+                    st.write(f"### {T['so_what']}")
+                    conclusion = (
+                        f"Trend is {'up' if q50 and q50[-1] >= vals[-1] else 'down'} with {'high' if (width or 1) < 0.12 else 'moderate'} confidence."
+                        if lang == "en"
+                        else f"추세는 {'상승' if q50 and q50[-1] >= vals[-1] else '하락'}이며 신뢰도는 {'높음' if (width or 1) < 0.12 else '보통'} 수준입니다."
+                    )
+                    st.info(conclusion)
+                    bullets = [
+                        (f"Last observed value: {vals[-1]:.3f}" if lang == "en" else f"최근 관측값: {vals[-1]:.3f}"),
+                        (f"Forecast median (last step): {q50[-1]:.3f}" if q50 else T["na_reason"]),
+                        (f"Uncertainty width: {width:.3f}" if width is not None else T["na_reason"]),
+                    ]
+                    for b in bullets[:3]:
+                        st.write(f"- {b}")
+                    st.caption(("Use with caution when uncertainty is wide." if (width or 1) > 0.18 else "Confidence acceptable for directional monitoring.") if lang == "en" else ("불확실성 폭이 넓어 해석에 주의가 필요합니다." if (width or 1) > 0.18 else "방향성 모니터링에는 활용 가능한 수준입니다."))
+
+                    st.write(f"### {T['quick_answers']}")
+                    q1, q2, q3 = st.columns(3)
+                    if q1.button(T["question_why"], key=f"qwhy-{market_id}"):
+                        st.info(("It helps detect momentum shifts before alerts escalate." if lang == "en" else "경보가 커지기 전에 모멘텀 변화를 빠르게 포착할 수 있습니다."))
+                    if q2.button(T["question_risk"], key=f"qrisk-{market_id}"):
+                        st.info(("Current risk is elevated." if (width or 1) > 0.18 or fc.get("used_fallback") else "Current risk is manageable.") if lang == "en" else ("현재 리스크가 높은 편입니다." if (width or 1) > 0.18 or fc.get("used_fallback") else "현재 리스크는 관리 가능한 수준입니다."))
+                    if q3.button(T["question_summary"], key=f"qsum-{market_id}"):
+                        st.info(conclusion)
 
         pm, pm_err = safe_get(f"/postmortem/{market_id}")
         if not pm_err and pm:
@@ -478,8 +663,10 @@ elif pages[page] == "compare":
                     st.error(T["safe_api_error"])
                     st.caption(f"comparison={cmp_err}")
                 else:
-                    baseline = cmp_result.get("baseline", {}).get("yhat_q", {})
-                    tollama = cmp_result.get("tollama", {}).get("yhat_q", {})
+                    baseline_full = cmp_result.get("baseline", {})
+                    tollama_full = cmp_result.get("tollama", {})
+                    baseline = baseline_full.get("yhat_q", {})
+                    tollama = tollama_full.get("yhat_q", {})
 
                     def last_val(block: dict[str, list[float]], q: str) -> float | None:
                         seq = block.get(q, [])
@@ -490,35 +677,86 @@ elif pages[page] == "compare":
                         b = last_val(baseline, q)
                         t = last_val(tollama, q)
                         d = (t - b) if b is not None and t is not None else None
-                        rows.append(
-                            {
-                                "quantile": q,
-                                "baseline_last": b,
-                                "tollama_last": t,
-                                "delta": d,
-                            }
-                        )
+                        rows.append({"quantile": q, "baseline_last": b, "tollama_last": t, "delta": d})
 
                     cmp_df = pd.DataFrame(rows)
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.write("### Baseline vs Tollama (last step)")
-                        st.dataframe(cmp_df, use_container_width=True)
-                    with c2:
-                        d50 = cmp_result.get("delta_last_q50")
-                        if d50 is None:
-                            st.info("Δ q50 unavailable")
-                        elif abs(d50) < 0.01:
-                            st.success(f"Δ q50: {d50:+.4f} (aligned)")
-                        elif abs(d50) < 0.03:
-                            st.warning(f"Δ q50: {d50:+.4f} (watch)")
-                        else:
-                            st.error(f"Δ q50: {d50:+.4f} (large)")
+                    st.write(f"### {T['battleboard']}")
+                    st.dataframe(cmp_df, use_container_width=True)
+
+                    n = len(vals)
+                    split = max(3, int(n * 0.7))
+                    test_y = vals[split:]
+                    horizon = len(test_y)
+                    bq50 = baseline.get("0.5", [])[:horizon]
+                    tq50 = tollama.get("0.5", [])[:horizon]
+                    b_metrics = calc_metrics(test_y, bq50, vals[:split]) if horizon > 0 and len(bq50) == horizon else calc_metrics([], [], [])
+                    t_metrics = calc_metrics(test_y, tq50, vals[:split]) if horizon > 0 and len(tq50) == horizon else calc_metrics([], [], [])
+
+                    def metric_or_na(v: float | None, reason: str) -> str:
+                        return f"{v:.4f}" if v is not None else f"{T['metric_na']} ({reason})"
+
+                    b_latency = baseline_full.get("latency_ms") or cmp_result.get("baseline_latency_ms")
+                    t_latency = tollama_full.get("latency_ms") or cmp_result.get("tollama_latency_ms")
+                    b_fallback = baseline_full.get("used_fallback")
+                    t_fallback = tollama_full.get("used_fallback")
+
+                    reason = "short test window" if lang == "en" else "테스트 구간 부족"
+                    board = pd.DataFrame(
+                        [
+                            {"model": "Baseline", "MAE": metric_or_na(b_metrics["mae"], reason), "MAPE": metric_or_na(b_metrics["mape"], reason), "MASE": metric_or_na(b_metrics["mase"], reason), "Pinball q10": metric_or_na(b_metrics["pinball_0.1"], reason), "Pinball q50": metric_or_na(b_metrics["pinball_0.5"], reason), "Pinball q90": metric_or_na(b_metrics["pinball_0.9"], reason), T["latency"]: f"{float(b_latency):.1f}ms" if b_latency is not None else f"{T['metric_na']} (not provided)", T["fallback_status"]: ("ON" if b_fallback else "OFF") if b_fallback is not None else f"{T['metric_na']} (not provided)"},
+                            {"model": "Tollama", "MAE": metric_or_na(t_metrics["mae"], reason), "MAPE": metric_or_na(t_metrics["mape"], reason), "MASE": metric_or_na(t_metrics["mase"], reason), "Pinball q10": metric_or_na(t_metrics["pinball_0.1"], reason), "Pinball q50": metric_or_na(t_metrics["pinball_0.5"], reason), "Pinball q90": metric_or_na(t_metrics["pinball_0.9"], reason), T["latency"]: f"{float(t_latency):.1f}ms" if t_latency is not None else f"{T['metric_na']} (not provided)", T["fallback_status"]: ("ON" if t_fallback else "OFF") if t_fallback is not None else f"{T['metric_na']} (not provided)"},
+                        ]
+                    )
+                    st.write(f"### {T['holdout_eval']}")
+                    st.dataframe(board, use_container_width=True, hide_index=True)
+
+                    d50 = cmp_result.get("delta_last_q50")
+                    if d50 is None:
+                        st.info("Δ q50 unavailable")
+                    elif abs(d50) < 0.01:
+                        st.success(f"Δ q50: {d50:+.4f} (aligned)")
+                    elif abs(d50) < 0.03:
+                        st.warning(f"Δ q50: {d50:+.4f} (watch)")
+                    else:
+                        st.error(f"Δ q50: {d50:+.4f} (large)")
+
+                    width = None
+                    if tollama.get("0.9") and tollama.get("0.1"):
+                        width = tollama["0.9"][-1] - tollama["0.1"][-1]
+                    badge, reasons, badge_style = reliability_gate(selected.get("as_of_ts"), bool(t_fallback), width)
+                    st.write(f"### {T['reliability_gate']}")
+                    getattr(st, badge_style)(badge)
+                    with st.expander(T["why_this_badge"], expanded=False):
+                        for r in reasons:
+                            st.write(f"- {r}")
+
+                    st.write(f"### {T['so_what']}")
+                    winner = "Tollama" if (t_metrics.get("mae") is not None and b_metrics.get("mae") is not None and t_metrics["mae"] <= b_metrics["mae"]) else "Baseline"
+                    st.info((f"{winner} is currently more reliable for this market." if lang == "en" else f"현재 이 마켓에서는 {winner} 쪽이 더 안정적입니다."))
+                    ev = [
+                        (f"MAE: Baseline {metric_or_na(b_metrics['mae'], reason)} vs Tollama {metric_or_na(t_metrics['mae'], reason)}"),
+                        (f"Pinball q50: Baseline {metric_or_na(b_metrics['pinball_0.5'], reason)} vs Tollama {metric_or_na(t_metrics['pinball_0.5'], reason)}"),
+                        (f"Fallback: Baseline {(b_fallback if b_fallback is not None else 'N/A')}, Tollama {(t_fallback if t_fallback is not None else 'N/A')}"),
+                    ]
+                    for b in ev[:3]:
+                        st.write(f"- {b}")
+                    st.caption(("Interpret with caution if holdout window is short." if lang == "en" else "홀드아웃 구간이 짧으면 해석에 주의하세요."))
+
+                    st.write(f"### {T['live_change']}")
+                    lc, lm = compute_live_change(vals)
+                    getattr(st, lc)(lm)
+
+                    st.write(f"### {T['quick_answers']}")
+                    q1, q2, q3 = st.columns(3)
+                    if q1.button(T["question_why"], key=f"cmp-qwhy-{market_id}"):
+                        st.info(("It shows whether model lift is real against fallback." if lang == "en" else "기본 경로 대비 모델 개선이 실제인지 확인해줍니다."))
+                    if q2.button(T["question_risk"], key=f"cmp-qrisk-{market_id}"):
+                        high_risk = bool(t_fallback) or (width is not None and width > 0.18)
+                        st.info(("Risk is elevated." if high_risk else "Risk is moderate.") if lang == "en" else ("리스크가 높은 편입니다." if high_risk else "리스크는 보통 수준입니다."))
+                    if q3.button(T["question_summary"], key=f"cmp-qsum-{market_id}"):
+                        st.info((f"{winner} currently leads on available evidence." if lang == "en" else f"가용 근거 기준으로 현재 {winner} 우세입니다."))
 
                     info_toggle("compare", T["compare_help"])
-
-                    st.write("### Explainability")
-                    st.info("Compare baseline fallback and tollama path; use Δq50 + interval width to judge trust.")
 
 elif pages[page] == "obs":
     try:

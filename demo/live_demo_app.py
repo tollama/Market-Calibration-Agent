@@ -37,6 +37,8 @@ I18N = {
         "overview_trust_alert_help": "Trust table ranks markets by confidence. Alerts chart shows where risks are concentrated by severity.",
         "detail_forecast_help": "q50 is the most typical path. q10 and q90 are lower/upper likely bounds. A wider gap means less certainty.",
         "compare_help": "Baseline is fallback logic. Tollama is the model path. Δ q50 is the median difference at the last step (near 0 = similar).",
+        "compare_warn_invalid_quantiles": "Some forecast quantiles are missing or invalid. Showing available values only.",
+        "compare_warn_quantile_trim": "Quantile lengths differ; using the shortest valid overlap.",
         "obs_help": "Requests = total forecast calls. Error rate = failed call share. Fallback = backup path used when primary fails. Cache hit rate = reused results share.",
         "market_source_sample": "Using local live sample markets.",
         "market_source_api": "Using API market list.",
@@ -109,6 +111,8 @@ I18N = {
         "overview_trust_alert_help": "신뢰 테이블은 마켓을 신뢰도 순으로 보여줍니다. 경보 차트는 심각도별로 위험이 어디에 몰렸는지 보여줍니다.",
         "detail_forecast_help": "q50은 가장 대표적인 경로입니다. q10/q90은 하단/상단 가능 범위입니다. 간격이 넓을수록 확신이 낮습니다.",
         "compare_help": "Baseline은 기본(대체) 로직, Tollama는 모델 예측입니다. Δ q50은 마지막 시점 중앙값 차이(0에 가까우면 유사)입니다.",
+        "compare_warn_invalid_quantiles": "일부 예측 분위수 데이터가 없거나 유효하지 않습니다. 사용 가능한 값만 표시합니다.",
+        "compare_warn_quantile_trim": "분위수 길이가 달라 가장 짧은 유효 구간으로 맞춰 계산합니다.",
         "obs_help": "Requests는 총 예측 호출 수, Error rate는 실패 비율, Fallback은 기본 경로로 대체된 횟수, Cache hit rate는 재사용된 결과 비율입니다.",
         "market_source_sample": "로컬 live 샘플 마켓 목록을 사용 중입니다.",
         "market_source_api": "API 마켓 목록을 사용 중입니다.",
@@ -343,6 +347,29 @@ def sanitize_quantile_series(values: Any) -> list[float]:
     return out
 
 
+def sanitize_yhat_q_map(yhat_q: Any) -> dict[str, list[float]]:
+    if not isinstance(yhat_q, dict):
+        return {}
+    return {q: sanitize_quantile_series(seq) for q, seq in yhat_q.items() if isinstance(q, str)}
+
+
+def overlap_quantiles(block: dict[str, list[float]], quantiles: list[str]) -> tuple[dict[str, list[float]], int, bool]:
+    lengths = [len(block.get(q, [])) for q in quantiles if len(block.get(q, [])) > 0]
+    if not lengths:
+        return ({q: [] for q in quantiles}, 0, False)
+    min_len = min(lengths)
+    trimmed = {q: block.get(q, [])[:min_len] for q in quantiles}
+    return trimmed, min_len, len(set(lengths)) > 1
+
+
+def metric_value_with_meta(preferred: Any, meta_obj: Any, key: str) -> Any:
+    if preferred is not None:
+        return preferred
+    if isinstance(meta_obj, dict):
+        return meta_obj.get(key)
+    return None
+
+
 def parse_prom_metrics(text: str) -> dict[str, float]:
     parsed: dict[str, float] = {}
     for line in text.splitlines():
@@ -409,13 +436,13 @@ def compute_live_change(y: list[float]) -> tuple[str, str]:
     return color, msg
 
 
-def calc_metrics(actual: list[float], pred: list[float], train: list[float]) -> dict[str, float | None]:
-    if not actual or not pred or len(actual) != len(pred):
+def calc_metrics(actual: list[float], pred_q50: list[float], train: list[float], pred_quantiles: dict[str, list[float]] | None = None) -> dict[str, float | None]:
+    if not actual or not pred_q50 or len(actual) != len(pred_q50):
         return {"mae": None, "mape": None, "mase": None, "pinball_0.1": None, "pinball_0.5": None, "pinball_0.9": None}
     n = len(actual)
-    abs_err = [abs(a - p) for a, p in zip(actual, pred)]
+    abs_err = [abs(a - p) for a, p in zip(actual, pred_q50)]
     mae = sum(abs_err) / n
-    mape_vals = [abs((a - p) / a) for a, p in zip(actual, pred) if abs(a) > 1e-8]
+    mape_vals = [abs((a - p) / a) for a, p in zip(actual, pred_q50) if abs(a) > 1e-8]
     mape = (sum(mape_vals) / len(mape_vals)) if mape_vals else None
     naive_scale = None
     if len(train) > 1:
@@ -423,20 +450,27 @@ def calc_metrics(actual: list[float], pred: list[float], train: list[float]) -> 
         naive_scale = (sum(diffs) / len(diffs)) if diffs else None
     mase = (mae / naive_scale) if naive_scale and naive_scale > 1e-8 else None
 
-    def pinball(q: float) -> float:
+    def pinball(q: float, pred: list[float]) -> float | None:
+        if not pred or len(pred) != len(actual):
+            return None
         vals = []
         for a, p in zip(actual, pred):
             e = a - p
             vals.append(max(q * e, (q - 1) * e))
         return sum(vals) / len(vals)
 
+    pqs = pred_quantiles or {}
+    p10 = pqs.get("0.1") if isinstance(pqs, dict) else None
+    p50 = pqs.get("0.5") if isinstance(pqs, dict) else None
+    p90 = pqs.get("0.9") if isinstance(pqs, dict) else None
+
     return {
         "mae": mae,
         "mape": mape,
         "mase": mase,
-        "pinball_0.1": pinball(0.1),
-        "pinball_0.5": pinball(0.5),
-        "pinball_0.9": pinball(0.9),
+        "pinball_0.1": pinball(0.1, p10 if isinstance(p10, list) else pred_q50),
+        "pinball_0.5": pinball(0.5, p50 if isinstance(p50, list) else pred_q50),
+        "pinball_0.9": pinball(0.9, p90 if isinstance(p90, list) else pred_q50),
     }
 
 
@@ -1015,12 +1049,21 @@ elif pages[page] == "compare":
         if not saved:
             st.caption("Run comparison to see results and quick answers." if lang == "en" else "비교 실행 후 결과와 빠른 질문 답변이 표시됩니다.")
         else:
-            vals = saved.get("vals", [])
-            cmp_result = saved.get("cmp_result", {})
-            baseline_full = cmp_result.get("baseline", {})
-            tollama_full = cmp_result.get("tollama", {})
-            baseline = baseline_full.get("yhat_q", {})
-            tollama = tollama_full.get("yhat_q", {})
+            vals = coerce_prob_series(saved.get("vals", []), limit=512)
+            cmp_result = saved.get("cmp_result", {}) if isinstance(saved.get("cmp_result", {}), dict) else {}
+            baseline_full = cmp_result.get("baseline", {}) if isinstance(cmp_result.get("baseline", {}), dict) else {}
+            tollama_full = cmp_result.get("tollama", {}) if isinstance(cmp_result.get("tollama", {}), dict) else {}
+            baseline = sanitize_yhat_q_map(baseline_full.get("yhat_q"))
+            tollama = sanitize_yhat_q_map(tollama_full.get("yhat_q"))
+
+            compare_warnings: list[str] = []
+            if not baseline or not tollama:
+                compare_warnings.append(T["compare_warn_invalid_quantiles"])
+
+            baseline_last, _, baseline_trimmed = overlap_quantiles(baseline, ["0.1", "0.5", "0.9"])
+            tollama_last, _, tollama_trimmed = overlap_quantiles(tollama, ["0.1", "0.5", "0.9"])
+            if baseline_trimmed or tollama_trimmed:
+                compare_warnings.append(T["compare_warn_quantile_trim"])
 
             def last_val(block: dict[str, list[float]], q: str) -> float | None:
                 seq = block.get(q, [])
@@ -1028,31 +1071,53 @@ elif pages[page] == "compare":
 
             rows = []
             for q in ["0.1", "0.5", "0.9"]:
-                b = last_val(baseline, q)
-                t = last_val(tollama, q)
+                b = last_val(baseline_last, q)
+                t = last_val(tollama_last, q)
                 d = (t - b) if b is not None and t is not None else None
                 rows.append({"quantile": q, "baseline_last": b, "tollama_last": t, "delta": d})
 
             cmp_df = pd.DataFrame(rows)
             st.write(f"### {T['battleboard']}")
+            for warn_msg in dict.fromkeys(compare_warnings):
+                st.caption(f"⚠️ {warn_msg}")
             st.dataframe(cmp_df, use_container_width=True)
 
             n = len(vals)
             split = max(3, int(n * 0.7))
             test_y = vals[split:]
             horizon = len(test_y)
-            bq50 = baseline.get("0.5", [])[:horizon]
-            tq50 = tollama.get("0.5", [])[:horizon]
-            b_metrics = calc_metrics(test_y, bq50, vals[:split]) if horizon > 0 and len(bq50) == horizon else calc_metrics([], [], [])
-            t_metrics = calc_metrics(test_y, tq50, vals[:split]) if horizon > 0 and len(tq50) == horizon else calc_metrics([], [], [])
+
+            def quantile_preds_for_horizon(block: dict[str, list[float]], target_horizon: int) -> dict[str, list[float]]:
+                if target_horizon <= 0:
+                    return {"0.1": [], "0.5": [], "0.9": []}
+                return {q: block.get(q, [])[:target_horizon] for q in ["0.1", "0.5", "0.9"]}
+
+            b_preds = quantile_preds_for_horizon(baseline, horizon)
+            t_preds = quantile_preds_for_horizon(tollama, horizon)
+            bq50 = b_preds.get("0.5", [])
+            tq50 = t_preds.get("0.5", [])
+            b_metrics = calc_metrics(test_y, bq50, vals[:split], b_preds) if horizon > 0 and len(bq50) == horizon else calc_metrics([], [], [])
+            t_metrics = calc_metrics(test_y, tq50, vals[:split], t_preds) if horizon > 0 and len(tq50) == horizon else calc_metrics([], [], [])
 
             def metric_or_na(v: float | None, reason: str) -> str:
-                return f"{v:.4f}" if v is not None else f"{T['metric_na']} ({reason})"
+                return f"{v:.4f}" if (v is not None and math.isfinite(v)) else f"{T['metric_na']} ({reason})"
 
-            b_latency = baseline_full.get("latency_ms") or cmp_result.get("baseline_latency_ms")
-            t_latency = tollama_full.get("latency_ms") or cmp_result.get("tollama_latency_ms")
-            b_fallback = baseline_full.get("used_fallback")
-            t_fallback = tollama_full.get("used_fallback")
+            b_meta = baseline_full.get("meta", {}) if isinstance(baseline_full.get("meta", {}), dict) else {}
+            t_meta = tollama_full.get("meta", {}) if isinstance(tollama_full.get("meta", {}), dict) else {}
+
+            b_latency_raw = metric_value_with_meta(baseline_full.get("latency_ms"), b_meta, "latency_ms")
+            if b_latency_raw is None:
+                b_latency_raw = cmp_result.get("baseline_latency_ms")
+            t_latency_raw = metric_value_with_meta(tollama_full.get("latency_ms"), t_meta, "latency_ms")
+            if t_latency_raw is None:
+                t_latency_raw = cmp_result.get("tollama_latency_ms")
+            b_latency = _coerce_float(b_latency_raw)
+            t_latency = _coerce_float(t_latency_raw)
+
+            b_fallback_raw = metric_value_with_meta(baseline_full.get("used_fallback"), b_meta, "used_fallback")
+            t_fallback_raw = metric_value_with_meta(tollama_full.get("used_fallback"), t_meta, "used_fallback")
+            b_fallback = b_fallback_raw if isinstance(b_fallback_raw, bool) else None
+            t_fallback = t_fallback_raw if isinstance(t_fallback_raw, bool) else None
 
             reason = T["na_short_window"]
             board = pd.DataFrame(
@@ -1064,7 +1129,7 @@ elif pages[page] == "compare":
             st.write(f"### {T['holdout_eval']}")
             st.dataframe(board, use_container_width=True, hide_index=True)
 
-            d50 = cmp_result.get("delta_last_q50")
+            d50 = _coerce_float(cmp_result.get("delta_last_q50"))
             if d50 is None:
                 st.info("Δ q50 unavailable")
             elif abs(d50) < 0.01:
@@ -1075,8 +1140,10 @@ elif pages[page] == "compare":
                 st.error(f"Δ q50: {d50:+.4f} (large)")
 
             width = None
-            if tollama.get("0.9") and tollama.get("0.1"):
-                width = tollama["0.9"][-1] - tollama["0.1"][-1]
+            t_q90_last = last_val(tollama_last, "0.9")
+            t_q10_last = last_val(tollama_last, "0.1")
+            if t_q90_last is not None and t_q10_last is not None:
+                width = t_q90_last - t_q10_last
             badge, reasons, badge_style = reliability_gate(saved.get("as_of_ts"), bool(t_fallback), width)
             st.write(f"### {T['reliability_gate']}")
             streamlit_notice(badge_style, badge)

@@ -714,6 +714,9 @@ elif pages[page] == "detail":
             default_y_text,
             key=f"detail-y-{market_id}",
         )
+        detail_state = st.session_state.setdefault("detail_results_by_market", {})
+        detail_answers = st.session_state.setdefault("detail_quick_answers_by_market", {})
+
         if st.button("Run forecast"):
             try:
                 vals = parse_series(y)
@@ -735,77 +738,96 @@ elif pages[page] == "detail":
                     st.error(T["safe_api_error"])
                     st.caption(f"forecast={fc_err}")
                 else:
-                    yhat = fc.get("yhat_q", {})
-                    q10 = yhat.get("0.1", [])
-                    q50 = yhat.get("0.5", [])
-                    q90 = yhat.get("0.9", [])
-                    horizon = list(range(1, max(len(q10), len(q50), len(q90)) + 1))
-                    fc_df = pd.DataFrame({"step": horizon})
-                    fc_df["q10"] = q10[: len(horizon)]
-                    fc_df["q50"] = q50[: len(horizon)]
-                    fc_df["q90"] = q90[: len(horizon)]
+                    detail_state[market_id] = {
+                        "vals": vals,
+                        "forecast": fc,
+                        "as_of_ts": selected.get("as_of_ts"),
+                    }
+                    detail_answers[market_id] = {}
 
-                    st.write("### Forecast (q10 / q50 / q90)")
-                    info_toggle("detail_forecast", T["detail_forecast_help"])
-                    st.line_chart(fc_df.set_index("step"))
-                    st.dataframe(fc_df, use_container_width=True)
+        saved_detail = detail_state.get(market_id)
+        if not saved_detail:
+            st.caption("Run forecast to see results and quick answers." if lang == "en" else "예측 실행 후 결과와 빠른 질문 답변이 표시됩니다.")
+        else:
+            vals = saved_detail.get("vals", [])
+            fc = saved_detail.get("forecast", {})
+            yhat = fc.get("yhat_q", {})
+            q10 = yhat.get("0.1", [])
+            q50 = yhat.get("0.5", [])
+            q90 = yhat.get("0.9", [])
+            horizon = list(range(1, max(len(q10), len(q50), len(q90)) + 1))
+            fc_df = pd.DataFrame({"step": horizon})
+            fc_df["q10"] = q10[: len(horizon)]
+            fc_df["q50"] = q50[: len(horizon)]
+            fc_df["q90"] = q90[: len(horizon)]
 
-                    width = None
-                    if q10 and q90 and q50:
-                        width = q90[-1] - q10[-1]
-                        st.write("### Explainability")
-                        e1, e2 = st.columns(2)
-                        e1.info(f"Median path (q50) last step: {q50[-1]:.3f}")
-                        e2.warning(f"Uncertainty width (q90-q10) last step: {width:.3f}")
+            st.write("### Forecast (q10 / q50 / q90)")
+            info_toggle("detail_forecast", T["detail_forecast_help"])
+            st.line_chart(fc_df.set_index("step"))
+            st.dataframe(fc_df, use_container_width=True)
 
-                    st.write(f"### {T['live_change']}")
-                    live_color, live_msg = compute_live_change(vals)
-                    streamlit_notice(live_color, live_msg)
-                    if q90 and q10 and len(q90) >= 2 and len(q10) >= 2:
-                        prev_w = q90[-2] - q10[-2]
-                        now_w = q90[-1] - q10[-1]
-                        wmsg = (
-                            "Uncertainty trend: widening."
-                            if now_w - prev_w > 0.01
-                            else "Uncertainty trend: narrowing."
-                            if prev_w - now_w > 0.01
-                            else "Uncertainty trend: stable."
-                        )
-                        if lang == "kr":
-                            wmsg = "불확실성 추세: 확대." if now_w - prev_w > 0.01 else "불확실성 추세: 축소." if prev_w - now_w > 0.01 else "불확실성 추세: 안정."
-                        st.caption(wmsg)
+            width = None
+            if q10 and q90 and q50:
+                width = q90[-1] - q10[-1]
+                st.write("### Explainability")
+                e1, e2 = st.columns(2)
+                e1.info(f"Median path (q50) last step: {q50[-1]:.3f}")
+                e2.warning(f"Uncertainty width (q90-q10) last step: {width:.3f}")
 
-                    badge, reasons, badge_style = reliability_gate(selected.get("as_of_ts"), bool(fc.get("used_fallback")), width)
-                    st.write(f"### {T['reliability_gate']}")
-                    streamlit_notice(badge_style, badge)
-                    with st.expander(T["why_this_badge"], expanded=False):
-                        for r in reasons:
-                            st.write(f"- {r}")
+            st.write(f"### {T['live_change']}")
+            live_color, live_msg = compute_live_change(vals)
+            streamlit_notice(live_color, live_msg)
+            if q90 and q10 and len(q90) >= 2 and len(q10) >= 2:
+                prev_w = q90[-2] - q10[-2]
+                now_w = q90[-1] - q10[-1]
+                wmsg = (
+                    "Uncertainty trend: widening."
+                    if now_w - prev_w > 0.01
+                    else "Uncertainty trend: narrowing."
+                    if prev_w - now_w > 0.01
+                    else "Uncertainty trend: stable."
+                )
+                if lang == "kr":
+                    wmsg = "불확실성 추세: 확대." if now_w - prev_w > 0.01 else "불확실성 추세: 축소." if prev_w - now_w > 0.01 else "불확실성 추세: 안정."
+                st.caption(wmsg)
 
-                    st.write(f"### {T['so_what']}")
-                    conclusion = (
-                        f"Expected direction: {'up' if q50 and q50[-1] >= vals[-1] else 'down'} (confidence: {'high' if (width or 1) < 0.12 else 'moderate'})."
-                        if lang == "en"
-                        else f"예상 방향: {'상승' if q50 and q50[-1] >= vals[-1] else '하락'} (신뢰도: {'높음' if (width or 1) < 0.12 else '보통'})."
-                    )
-                    st.info(conclusion)
-                    bullets = [
-                        (f"Last observed value: {vals[-1]:.3f}" if lang == "en" else f"최근 관측값: {vals[-1]:.3f}"),
-                        (f"Forecast median (last step): {q50[-1]:.3f}" if q50 else T["na_reason"]),
-                        (f"Uncertainty width: {width:.3f}" if width is not None else T["na_reason"]),
-                    ]
-                    for b in bullets[:3]:
-                        st.write(f"- {b}")
-                    st.caption(("Use caution when uncertainty is wide." if (width or 1) > 0.18 else "Suitable for directional monitoring.") if lang == "en" else ("불확실성 폭이 넓어 해석에 주의가 필요합니다." if (width or 1) > 0.18 else "방향성 모니터링에 활용할 수 있습니다."))
+            badge, reasons, badge_style = reliability_gate(saved_detail.get("as_of_ts"), bool(fc.get("used_fallback")), width)
+            st.write(f"### {T['reliability_gate']}")
+            streamlit_notice(badge_style, badge)
+            with st.expander(T["why_this_badge"], expanded=False):
+                for r in reasons:
+                    st.write(f"- {r}")
 
-                    st.write(f"### {T['quick_answers']}")
-                    q1, q2, q3 = st.columns(3)
-                    if q1.button(T["question_why"], key=f"qwhy-{market_id}"):
-                        st.info(("Helps spot momentum changes early." if lang == "en" else "모멘텀 변화를 초기에 파악하는 데 도움이 됩니다."))
-                    if q2.button(T["question_risk"], key=f"qrisk-{market_id}"):
-                        st.info(("Risk is elevated right now." if (width or 1) > 0.18 or fc.get("used_fallback") else "Risk is manageable right now.") if lang == "en" else ("현재 리스크가 높은 편입니다." if (width or 1) > 0.18 or fc.get("used_fallback") else "현재 리스크는 관리 가능한 수준입니다."))
-                    if q3.button(T["question_summary"], key=f"qsum-{market_id}"):
-                        st.info(conclusion)
+            st.write(f"### {T['so_what']}")
+            conclusion = (
+                f"Expected direction: {'up' if q50 and q50[-1] >= vals[-1] else 'down'} (confidence: {'high' if (width or 1) < 0.12 else 'moderate'})."
+                if lang == "en"
+                else f"예상 방향: {'상승' if q50 and q50[-1] >= vals[-1] else '하락'} (신뢰도: {'높음' if (width or 1) < 0.12 else '보통'})."
+            )
+            st.info(conclusion)
+            bullets = [
+                (f"Last observed value: {vals[-1]:.3f}" if lang == "en" else f"최근 관측값: {vals[-1]:.3f}"),
+                (f"Forecast median (last step): {q50[-1]:.3f}" if q50 else T["na_reason"]),
+                (f"Uncertainty width: {width:.3f}" if width is not None else T["na_reason"]),
+            ]
+            for b in bullets[:3]:
+                st.write(f"- {b}")
+            st.caption(("Use caution when uncertainty is wide." if (width or 1) > 0.18 else "Suitable for directional monitoring.") if lang == "en" else ("불확실성 폭이 넓어 해석에 주의가 필요합니다." if (width or 1) > 0.18 else "방향성 모니터링에 활용할 수 있습니다."))
+
+            st.write(f"### {T['quick_answers']}")
+            q1, q2, q3 = st.columns(3)
+            market_answers = detail_answers.setdefault(market_id, {})
+            if q1.button(T["question_why"], key=f"qwhy-{market_id}"):
+                market_answers["why"] = ("Helps spot momentum changes early." if lang == "en" else "모멘텀 변화를 초기에 파악하는 데 도움이 됩니다.")
+            if q2.button(T["question_risk"], key=f"qrisk-{market_id}"):
+                market_answers["risk"] = (("Risk is elevated right now." if (width or 1) > 0.18 or fc.get("used_fallback") else "Risk is manageable right now.") if lang == "en" else ("현재 리스크가 높은 편입니다." if (width or 1) > 0.18 or fc.get("used_fallback") else "현재 리스크는 관리 가능한 수준입니다."))
+            if q3.button(T["question_summary"], key=f"qsum-{market_id}"):
+                market_answers["summary"] = conclusion
+
+            for qa_key in ["why", "risk", "summary"]:
+                msg = market_answers.get(qa_key)
+                if msg:
+                    st.info(msg)
 
         pm, pm_err = safe_get(f"/postmortem/{market_id}")
         if not pm_err and pm:
@@ -843,6 +865,9 @@ elif pages[page] == "compare":
 
         y = st.text_area("Input y values", default_y_text, key=f"cmp-y-{market_id}")
 
+        cmp_state = st.session_state.setdefault("compare_results_by_market", {})
+        cmp_answers = st.session_state.setdefault("compare_quick_answers_by_market", {})
+
         if st.button("Run comparison"):
             try:
                 vals = parse_series(y)
@@ -867,100 +892,119 @@ elif pages[page] == "compare":
                     st.error(T["safe_api_error"])
                     st.caption(f"comparison={cmp_err}")
                 else:
-                    baseline_full = cmp_result.get("baseline", {})
-                    tollama_full = cmp_result.get("tollama", {})
-                    baseline = baseline_full.get("yhat_q", {})
-                    tollama = tollama_full.get("yhat_q", {})
+                    cmp_state[market_id] = {
+                        "vals": vals,
+                        "cmp_result": cmp_result,
+                        "as_of_ts": selected.get("as_of_ts"),
+                    }
+                    cmp_answers[market_id] = {}
 
-                    def last_val(block: dict[str, list[float]], q: str) -> float | None:
-                        seq = block.get(q, [])
-                        return seq[-1] if seq else None
+        saved = cmp_state.get(market_id)
+        if not saved:
+            st.caption("Run comparison to see results and quick answers." if lang == "en" else "비교 실행 후 결과와 빠른 질문 답변이 표시됩니다.")
+        else:
+            vals = saved.get("vals", [])
+            cmp_result = saved.get("cmp_result", {})
+            baseline_full = cmp_result.get("baseline", {})
+            tollama_full = cmp_result.get("tollama", {})
+            baseline = baseline_full.get("yhat_q", {})
+            tollama = tollama_full.get("yhat_q", {})
 
-                    rows = []
-                    for q in ["0.1", "0.5", "0.9"]:
-                        b = last_val(baseline, q)
-                        t = last_val(tollama, q)
-                        d = (t - b) if b is not None and t is not None else None
-                        rows.append({"quantile": q, "baseline_last": b, "tollama_last": t, "delta": d})
+            def last_val(block: dict[str, list[float]], q: str) -> float | None:
+                seq = block.get(q, [])
+                return seq[-1] if seq else None
 
-                    cmp_df = pd.DataFrame(rows)
-                    st.write(f"### {T['battleboard']}")
-                    st.dataframe(cmp_df, use_container_width=True)
+            rows = []
+            for q in ["0.1", "0.5", "0.9"]:
+                b = last_val(baseline, q)
+                t = last_val(tollama, q)
+                d = (t - b) if b is not None and t is not None else None
+                rows.append({"quantile": q, "baseline_last": b, "tollama_last": t, "delta": d})
 
-                    n = len(vals)
-                    split = max(3, int(n * 0.7))
-                    test_y = vals[split:]
-                    horizon = len(test_y)
-                    bq50 = baseline.get("0.5", [])[:horizon]
-                    tq50 = tollama.get("0.5", [])[:horizon]
-                    b_metrics = calc_metrics(test_y, bq50, vals[:split]) if horizon > 0 and len(bq50) == horizon else calc_metrics([], [], [])
-                    t_metrics = calc_metrics(test_y, tq50, vals[:split]) if horizon > 0 and len(tq50) == horizon else calc_metrics([], [], [])
+            cmp_df = pd.DataFrame(rows)
+            st.write(f"### {T['battleboard']}")
+            st.dataframe(cmp_df, use_container_width=True)
 
-                    def metric_or_na(v: float | None, reason: str) -> str:
-                        return f"{v:.4f}" if v is not None else f"{T['metric_na']} ({reason})"
+            n = len(vals)
+            split = max(3, int(n * 0.7))
+            test_y = vals[split:]
+            horizon = len(test_y)
+            bq50 = baseline.get("0.5", [])[:horizon]
+            tq50 = tollama.get("0.5", [])[:horizon]
+            b_metrics = calc_metrics(test_y, bq50, vals[:split]) if horizon > 0 and len(bq50) == horizon else calc_metrics([], [], [])
+            t_metrics = calc_metrics(test_y, tq50, vals[:split]) if horizon > 0 and len(tq50) == horizon else calc_metrics([], [], [])
 
-                    b_latency = baseline_full.get("latency_ms") or cmp_result.get("baseline_latency_ms")
-                    t_latency = tollama_full.get("latency_ms") or cmp_result.get("tollama_latency_ms")
-                    b_fallback = baseline_full.get("used_fallback")
-                    t_fallback = tollama_full.get("used_fallback")
+            def metric_or_na(v: float | None, reason: str) -> str:
+                return f"{v:.4f}" if v is not None else f"{T['metric_na']} ({reason})"
 
-                    reason = T["na_short_window"]
-                    board = pd.DataFrame(
-                        [
-                            {"model": "Baseline", "MAE": metric_or_na(b_metrics["mae"], reason), "MAPE": metric_or_na(b_metrics["mape"], reason), "MASE": metric_or_na(b_metrics["mase"], reason), "Pinball q10": metric_or_na(b_metrics["pinball_0.1"], reason), "Pinball q50": metric_or_na(b_metrics["pinball_0.5"], reason), "Pinball q90": metric_or_na(b_metrics["pinball_0.9"], reason), T["latency"]: f"{float(b_latency):.1f}ms" if b_latency is not None else f"{T['metric_na']} ({T['na_not_provided']})", T["fallback_status"]: ("ON" if b_fallback else "OFF") if b_fallback is not None else f"{T['metric_na']} ({T['na_not_provided']})"},
-                            {"model": "Tollama", "MAE": metric_or_na(t_metrics["mae"], reason), "MAPE": metric_or_na(t_metrics["mape"], reason), "MASE": metric_or_na(t_metrics["mase"], reason), "Pinball q10": metric_or_na(t_metrics["pinball_0.1"], reason), "Pinball q50": metric_or_na(t_metrics["pinball_0.5"], reason), "Pinball q90": metric_or_na(t_metrics["pinball_0.9"], reason), T["latency"]: f"{float(t_latency):.1f}ms" if t_latency is not None else f"{T['metric_na']} ({T['na_not_provided']})", T["fallback_status"]: ("ON" if t_fallback else "OFF") if t_fallback is not None else f"{T['metric_na']} ({T['na_not_provided']})"},
-                        ]
-                    )
-                    st.write(f"### {T['holdout_eval']}")
-                    st.dataframe(board, use_container_width=True, hide_index=True)
+            b_latency = baseline_full.get("latency_ms") or cmp_result.get("baseline_latency_ms")
+            t_latency = tollama_full.get("latency_ms") or cmp_result.get("tollama_latency_ms")
+            b_fallback = baseline_full.get("used_fallback")
+            t_fallback = tollama_full.get("used_fallback")
 
-                    d50 = cmp_result.get("delta_last_q50")
-                    if d50 is None:
-                        st.info("Δ q50 unavailable")
-                    elif abs(d50) < 0.01:
-                        st.success(f"Δ q50: {d50:+.4f} (aligned)")
-                    elif abs(d50) < 0.03:
-                        st.warning(f"Δ q50: {d50:+.4f} (watch)")
-                    else:
-                        st.error(f"Δ q50: {d50:+.4f} (large)")
+            reason = T["na_short_window"]
+            board = pd.DataFrame(
+                [
+                    {"model": "Baseline", "MAE": metric_or_na(b_metrics["mae"], reason), "MAPE": metric_or_na(b_metrics["mape"], reason), "MASE": metric_or_na(b_metrics["mase"], reason), "Pinball q10": metric_or_na(b_metrics["pinball_0.1"], reason), "Pinball q50": metric_or_na(b_metrics["pinball_0.5"], reason), "Pinball q90": metric_or_na(b_metrics["pinball_0.9"], reason), T["latency"]: f"{float(b_latency):.1f}ms" if b_latency is not None else f"{T['metric_na']} ({T['na_not_provided']})", T["fallback_status"]: ("ON" if b_fallback else "OFF") if b_fallback is not None else f"{T['metric_na']} ({T['na_not_provided']})"},
+                    {"model": "Tollama", "MAE": metric_or_na(t_metrics["mae"], reason), "MAPE": metric_or_na(t_metrics["mape"], reason), "MASE": metric_or_na(t_metrics["mase"], reason), "Pinball q10": metric_or_na(t_metrics["pinball_0.1"], reason), "Pinball q50": metric_or_na(t_metrics["pinball_0.5"], reason), "Pinball q90": metric_or_na(t_metrics["pinball_0.9"], reason), T["latency"]: f"{float(t_latency):.1f}ms" if t_latency is not None else f"{T['metric_na']} ({T['na_not_provided']})", T["fallback_status"]: ("ON" if t_fallback else "OFF") if t_fallback is not None else f"{T['metric_na']} ({T['na_not_provided']})"},
+                ]
+            )
+            st.write(f"### {T['holdout_eval']}")
+            st.dataframe(board, use_container_width=True, hide_index=True)
 
-                    width = None
-                    if tollama.get("0.9") and tollama.get("0.1"):
-                        width = tollama["0.9"][-1] - tollama["0.1"][-1]
-                    badge, reasons, badge_style = reliability_gate(selected.get("as_of_ts"), bool(t_fallback), width)
-                    st.write(f"### {T['reliability_gate']}")
-                    streamlit_notice(badge_style, badge)
-                    with st.expander(T["why_this_badge"], expanded=False):
-                        for r in reasons:
-                            st.write(f"- {r}")
+            d50 = cmp_result.get("delta_last_q50")
+            if d50 is None:
+                st.info("Δ q50 unavailable")
+            elif abs(d50) < 0.01:
+                st.success(f"Δ q50: {d50:+.4f} (aligned)")
+            elif abs(d50) < 0.03:
+                st.warning(f"Δ q50: {d50:+.4f} (watch)")
+            else:
+                st.error(f"Δ q50: {d50:+.4f} (large)")
 
-                    st.write(f"### {T['so_what']}")
-                    winner = "Tollama" if (t_metrics.get("mae") is not None and b_metrics.get("mae") is not None and t_metrics["mae"] <= b_metrics["mae"]) else "Baseline"
-                    st.info((f"Current lead: {winner} for this market." if lang == "en" else f"현재 이 마켓의 우세 모델: {winner}."))
-                    ev = [
-                        (f"MAE: Baseline {metric_or_na(b_metrics['mae'], reason)} vs Tollama {metric_or_na(t_metrics['mae'], reason)}"),
-                        (f"Pinball q50: Baseline {metric_or_na(b_metrics['pinball_0.5'], reason)} vs Tollama {metric_or_na(t_metrics['pinball_0.5'], reason)}"),
-                        (f"Fallback: Baseline {(b_fallback if b_fallback is not None else 'N/A')}, Tollama {(t_fallback if t_fallback is not None else 'N/A')}"),
-                    ]
-                    for b in ev[:3]:
-                        st.write(f"- {b}")
-                    st.caption(("Use caution when the holdout window is short." if lang == "en" else "홀드아웃 구간이 짧으면 해석에 주의하세요."))
+            width = None
+            if tollama.get("0.9") and tollama.get("0.1"):
+                width = tollama["0.9"][-1] - tollama["0.1"][-1]
+            badge, reasons, badge_style = reliability_gate(saved.get("as_of_ts"), bool(t_fallback), width)
+            st.write(f"### {T['reliability_gate']}")
+            streamlit_notice(badge_style, badge)
+            with st.expander(T["why_this_badge"], expanded=False):
+                for r in reasons:
+                    st.write(f"- {r}")
 
-                    st.write(f"### {T['live_change']}")
-                    lc, lm = compute_live_change(vals)
-                    streamlit_notice(lc, lm)
+            st.write(f"### {T['so_what']}")
+            winner = "Tollama" if (t_metrics.get("mae") is not None and b_metrics.get("mae") is not None and t_metrics["mae"] <= b_metrics["mae"]) else "Baseline"
+            st.info((f"Current lead: {winner} for this market." if lang == "en" else f"현재 이 마켓의 우세 모델: {winner}."))
+            ev = [
+                (f"MAE: Baseline {metric_or_na(b_metrics['mae'], reason)} vs Tollama {metric_or_na(t_metrics['mae'], reason)}"),
+                (f"Pinball q50: Baseline {metric_or_na(b_metrics['pinball_0.5'], reason)} vs Tollama {metric_or_na(t_metrics['pinball_0.5'], reason)}"),
+                (f"Fallback: Baseline {(b_fallback if b_fallback is not None else 'N/A')}, Tollama {(t_fallback if t_fallback is not None else 'N/A')}"),
+            ]
+            for b in ev[:3]:
+                st.write(f"- {b}")
+            st.caption(("Use caution when the holdout window is short." if lang == "en" else "홀드아웃 구간이 짧으면 해석에 주의하세요."))
 
-                    st.write(f"### {T['quick_answers']}")
-                    q1, q2, q3 = st.columns(3)
-                    if q1.button(T["question_why"], key=f"cmp-qwhy-{market_id}"):
-                        st.info(("Checks whether model gains hold against fallback." if lang == "en" else "모델 개선이 대체 경로 대비 유효한지 확인합니다."))
-                    if q2.button(T["question_risk"], key=f"cmp-qrisk-{market_id}"):
-                        high_risk = bool(t_fallback) or (width is not None and width > 0.18)
-                        st.info(("Risk is elevated right now." if high_risk else "Risk is moderate right now.") if lang == "en" else ("현재 리스크가 높은 편입니다." if high_risk else "현재 리스크는 보통 수준입니다."))
-                    if q3.button(T["question_summary"], key=f"cmp-qsum-{market_id}"):
-                        st.info((f"Based on current evidence, {winner} is ahead." if lang == "en" else f"현재 근거 기준으로 {winner}가 우세합니다."))
+            st.write(f"### {T['live_change']}")
+            lc, lm = compute_live_change(vals)
+            streamlit_notice(lc, lm)
 
-                    info_toggle("compare", T["compare_help"])
+            st.write(f"### {T['quick_answers']}")
+            q1, q2, q3 = st.columns(3)
+            market_answers = cmp_answers.setdefault(market_id, {})
+            if q1.button(T["question_why"], key=f"cmp-qwhy-{market_id}"):
+                market_answers["why"] = ("Checks whether model gains hold against fallback." if lang == "en" else "모델 개선이 대체 경로 대비 유효한지 확인합니다.")
+            if q2.button(T["question_risk"], key=f"cmp-qrisk-{market_id}"):
+                high_risk = bool(t_fallback) or (width is not None and width > 0.18)
+                market_answers["risk"] = (("Risk is elevated right now." if high_risk else "Risk is moderate right now.") if lang == "en" else ("현재 리스크가 높은 편입니다." if high_risk else "현재 리스크는 보통 수준입니다."))
+            if q3.button(T["question_summary"], key=f"cmp-qsum-{market_id}"):
+                market_answers["summary"] = (f"Based on current evidence, {winner} is ahead." if lang == "en" else f"현재 근거 기준으로 {winner}가 우세합니다.")
+
+            for qa_key in ["why", "risk", "summary"]:
+                msg = market_answers.get(qa_key)
+                if msg:
+                    st.info(msg)
+
+            info_toggle("compare", T["compare_help"])
 
 elif pages[page] == "obs":
     try:

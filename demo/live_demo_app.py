@@ -295,6 +295,16 @@ def build_top_markets_df(items: list[dict[str, Any]], top_n: int) -> pd.DataFram
     return df.sort_values(by="latest_yes_price", ascending=False, na_position="last").head(top_n).reset_index(drop=True)
 
 
+
+
+def get_column_case_insensitive(df: pd.DataFrame, target: str) -> str | None:
+    lookup = {str(c).strip().lower(): c for c in df.columns}
+    return lookup.get(target.strip().lower())
+
+
+def is_calibrated_market_id(market_id: Any) -> bool:
+    return str(market_id or "").strip().lower().startswith("mkt-")
+
 def parse_series(series_text: str) -> list[float]:
     vals = [float(v.strip()) for v in series_text.split(",") if v.strip()]
     if not vals or any(math.isnan(v) or v < 0 or v > 1 for v in vals):
@@ -552,8 +562,14 @@ if pages[page] == "overview":
 
     market_count = len(score_df)
     top_list_count = len(top_df)
-    avg_trust = float(score_df["trust_score"].dropna().mean()) if "trust_score" in score_df else float("nan")
-    high_alerts = int((alert_df["severity"].astype(str).str.upper() == "HIGH").sum()) if "severity" in alert_df else 0
+
+    trust_col = get_column_case_insensitive(score_df, "trust_score")
+    trust_series = pd.to_numeric(score_df[trust_col], errors="coerce") if trust_col else pd.Series(dtype=float)
+    trust_series = trust_series[trust_series.apply(math.isfinite)] if not trust_series.empty else trust_series
+    avg_trust = float(trust_series.mean()) if not trust_series.empty else float("nan")
+
+    sev_col = get_column_case_insensitive(alert_df, "severity")
+    high_alerts = int((alert_df[sev_col].astype(str).str.upper() == "HIGH").sum()) if sev_col else 0
 
     if impact_mode:
         st.write(f"### {T['wow_center']}")
@@ -656,11 +672,16 @@ if pages[page] == "overview":
         left, right = st.columns(2)
         with left:
             st.write("### Trust by market")
-            if not score_df.empty and {"market_id", "trust_score"}.issubset(score_df.columns):
+            market_id_col = get_column_case_insensitive(score_df, "market_id")
+            trust_col = get_column_case_insensitive(score_df, "trust_score")
+            if not score_df.empty and market_id_col and trust_col:
+                display_cols = [market_id_col, trust_col]
+                for optional in ["brier", "ece", "liquidity_bucket", "category"]:
+                    col = get_column_case_insensitive(score_df, optional)
+                    if col:
+                        display_cols.append(col)
                 st.dataframe(
-                    score_df[["market_id", "trust_score", "brier", "ece", "liquidity_bucket", "category"]].sort_values(
-                        by="trust_score", ascending=False
-                    ),
+                    score_df[display_cols].sort_values(by=trust_col, ascending=False),
                     use_container_width=True,
                 )
             else:
@@ -668,8 +689,9 @@ if pages[page] == "overview":
 
         with right:
             st.write("### Alerts by severity")
-            if not alert_df.empty and "severity" in alert_df.columns:
-                sev = alert_df.groupby("severity").size().rename("count").to_frame()
+            sev_col = get_column_case_insensitive(alert_df, "severity")
+            if not alert_df.empty and sev_col:
+                sev = alert_df.groupby(sev_col).size().rename("count").to_frame()
                 st.bar_chart(sev)
             else:
                 st.caption("No alerts.")
@@ -708,17 +730,21 @@ elif pages[page] == "detail":
         selected = labels[selected_label]
         market_id = str(selected.get("market_id"))
 
-        detail, dt_err = safe_get(f"/markets/{market_id}")
-        if dt_err and dt_err != "HTTP 404":
-            st.error(T["safe_api_error"])
-            st.caption(f"detail={dt_err}")
-        elif dt_err == "HTTP 404" and market_id in sample_by_id:
+        detail = None
+        dt_err = None
+        if is_calibrated_market_id(market_id):
+            detail, dt_err = safe_get(f"/markets/{market_id}")
+
+        if (dt_err == "HTTP 404" or not is_calibrated_market_id(market_id)) and market_id in sample_by_id:
             sample_meta = sample_by_id[market_id]
             st.info(T["market_meta_sample_fallback"])
             d1, d2, d3 = st.columns(3)
             d1.metric("Market ID", market_id)
             d2.metric("Question", sample_meta.get("question") or sample_meta.get("title") or "-")
             d3.metric("As of", str(sample_meta.get("as_of_ts") or "-"))
+        elif dt_err and dt_err != "HTTP 404":
+            st.error(T["safe_api_error"])
+            st.caption(f"detail={dt_err}")
         elif detail:
             d1, d2, d3 = st.columns(3)
             d1.metric("Trust", f"{detail.get('trust_score', 0):.3f}" if detail.get("trust_score") is not None else "-")
@@ -850,7 +876,13 @@ elif pages[page] == "detail":
                 if msg:
                     st.info(msg)
 
-        pm, pm_err = safe_get(f"/postmortem/{market_id}")
+        pm = None
+        pm_err = None
+        if is_calibrated_market_id(market_id):
+            pm, pm_err = safe_get(f"/postmortem/{market_id}")
+        elif market_id in sample_by_id:
+            pm = {"content": sample_by_id[market_id].get("question") or sample_by_id[market_id].get("title") or ""}
+
         if not pm_err and pm:
             with st.expander("Latest Postmortem", expanded=False):
                 st.markdown(pm.get("content", ""))

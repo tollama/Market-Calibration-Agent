@@ -63,6 +63,27 @@ I18N = {
         "fallback_status": "Fallback",
         "latency": "Latency",
         "freshness": "Freshness",
+        "impact_mode": "Impact Mode",
+        "wow_center": "⚡ WOW Command Center",
+        "what_matters_now": "What matters now",
+        "confidence_risk": "Confidence / Risk",
+        "evidence_now": "Evidence now",
+        "caution": "Caution",
+        "safety_note": "Safety note: This is a live demo signal, not investment advice.",
+        "top_movers_now": "🚀 Top Movers Now (Δ5m)",
+        "market_id": "market_id",
+        "question_short": "question",
+        "last_price": "last_price",
+        "delta_5m": "delta_5m",
+        "signal": "signal",
+        "signal_up": "up",
+        "signal_down": "down",
+        "signal_flat": "flat",
+        "live_storyline": "🧭 Live Storyline",
+        "story_pulse": "Pulse",
+        "story_model_edge": "Model Edge",
+        "story_risk_gate": "Risk Gate",
+        "no_markets": "No markets available.",
     },
     "kr": {
         "app_title": "📊 마켓 캘리브레이션 LIVE 데모 v2",
@@ -109,6 +130,27 @@ I18N = {
         "fallback_status": "대체 경로",
         "latency": "지연시간",
         "freshness": "신선도",
+        "impact_mode": "임팩트 모드",
+        "wow_center": "⚡ WOW 커맨드 센터",
+        "what_matters_now": "지금 중요한 포인트",
+        "confidence_risk": "확신 / 리스크",
+        "evidence_now": "현재 근거",
+        "caution": "주의",
+        "safety_note": "안내: 본 내용은 라이브 데모 신호이며 투자 조언이 아닙니다.",
+        "top_movers_now": "🚀 지금 급변 마켓 (Δ5분)",
+        "market_id": "market_id",
+        "question_short": "질문",
+        "last_price": "현재가",
+        "delta_5m": "Δ5분",
+        "signal": "시그널",
+        "signal_up": "상승",
+        "signal_down": "하락",
+        "signal_flat": "보합",
+        "live_storyline": "🧭 라이브 스토리라인",
+        "story_pulse": "시장 펄스",
+        "story_model_edge": "모델 우위",
+        "story_risk_gate": "리스크 게이트",
+        "no_markets": "표시할 마켓이 없습니다.",
     },
 }
 
@@ -119,6 +161,8 @@ lang = st.sidebar.selectbox(
     format_func=lambda x: "English" if x == "en" else "한국어",
 )
 T = I18N[lang]
+
+impact_mode = st.sidebar.toggle(T["impact_mode"], value=True)
 
 st.sidebar.warning("⚠️ " + T["disclaimer"])
 
@@ -383,6 +427,60 @@ def info_toggle(key: str, text: str) -> None:
         st.info(text)
 
 
+def short_text(s: str, max_len: int = 64) -> str:
+    txt = (s or "").strip()
+    if len(txt) <= max_len:
+        return txt
+    return txt[: max_len - 1].rstrip() + "…"
+
+
+def market_delta_5m(item: dict[str, Any]) -> float | None:
+    y = item.get("y")
+    if not isinstance(y, list) or len(y) < 2:
+        return None
+    last = _coerce_float(y[-1])
+    prev = _coerce_float(y[-2])
+    if last is None or prev is None:
+        return None
+    return last - prev
+
+
+def signal_label(delta: float | None) -> str:
+    if delta is None or abs(delta) < 0.002:
+        return T["signal_flat"]
+    return T["signal_up"] if delta > 0 else T["signal_down"]
+
+
+def build_top_movers_df(items: list[dict[str, Any]], top_n: int) -> pd.DataFrame:
+    ranked = sorted(items, key=lambda it: latest_yes_price(it) if latest_yes_price(it) is not None else -1.0, reverse=True)[:top_n]
+    rows: list[dict[str, Any]] = []
+    for item in ranked:
+        delta = market_delta_5m(item)
+        price = latest_yes_price(item)
+        rows.append(
+            {
+                T["market_id"]: str(item.get("market_id") or "-"),
+                T["question_short"]: short_text(str(item.get("question") or item.get("title") or "-"), 68),
+                T["last_price"]: round(price, 3) if price is not None else None,
+                T["delta_5m"]: round(delta, 3) if delta is not None else None,
+                T["signal"]: signal_label(delta),
+                "_abs_delta": abs(delta) if delta is not None else -1.0,
+            }
+        )
+    if not rows:
+        return pd.DataFrame(columns=[T["market_id"], T["question_short"], T["last_price"], T["delta_5m"], T["signal"]])
+    df = pd.DataFrame(rows).sort_values(by="_abs_delta", ascending=False).drop(columns=["_abs_delta"])
+    return df.reset_index(drop=True)
+
+
+def wow_badge(avg_trust: float, high_alerts: int) -> tuple[str, str, str]:
+    if not math.isnan(avg_trust) and avg_trust >= 0.72 and high_alerts <= 2:
+        return ("🟢 Green", "success", "steady") if lang == "en" else ("🟢 Green", "success", "안정")
+    if (not math.isnan(avg_trust) and avg_trust >= 0.55) and high_alerts <= 6:
+        return ("🟡 Yellow", "warning", "watch") if lang == "en" else ("🟡 Yellow", "warning", "주의")
+    return ("🔴 Red", "error", "elevated") if lang == "en" else ("🔴 Red", "error", "높음")
+
+
 if pages[page] == "overview":
     sample_items = load_sample_markets()
     top_n = st.sidebar.slider(T["top_n_markets"], min_value=3, max_value=20, value=10, step=1)
@@ -410,22 +508,105 @@ if pages[page] == "overview":
     st.write(f"### {T['top_markets_title']} ({len(top_df)})")
     st.caption(T["top_markets_help"])
     if top_df.empty:
-        st.caption("No markets available.")
+        st.caption(T["no_markets"])
     else:
         st.dataframe(top_df, use_container_width=True, hide_index=True)
+
+    score_items = (scoreboard or {}).get("items", [])
+    alert_items = (alerts or {}).get("items", [])
+    score_df = pd.DataFrame(score_items)
+    alert_df = pd.DataFrame(alert_items)
+
+    market_count = len(score_df)
+    avg_trust = float(score_df["trust_score"].dropna().mean()) if "trust_score" in score_df else float("nan")
+    high_alerts = int((alert_df["severity"] == "high").sum()) if "severity" in alert_df else 0
+
+    if impact_mode:
+        st.write(f"### {T['wow_center']}")
+        spotlight = market_items[0] if market_items else {}
+        if not top_df.empty:
+            top_market_id = str(top_df.iloc[0]["market_id"])
+            for it in market_items:
+                if str(it.get("market_id")) == top_market_id:
+                    spotlight = it
+                    break
+
+        sp_q = str(spotlight.get("question") or spotlight.get("title") or "-")
+        sp_price = latest_yes_price(spotlight)
+        sp_delta = market_delta_5m(spotlight)
+        badge_text, badge_style, risk_word = wow_badge(avg_trust, high_alerts)
+
+        hero = (
+            f"{T['what_matters_now']}: {short_text(sp_q, 96)}"
+            if lang == "en"
+            else f"{T['what_matters_now']}: {short_text(sp_q, 96)}"
+        )
+        st.markdown(f"#### {hero}")
+        getattr(st, badge_style)(f"{T['confidence_risk']}: {badge_text}")
+
+        bullets = [
+            (f"Spotlight market: {spotlight.get('market_id', '-')}" if lang == "en" else f"스포트라이트 마켓: {spotlight.get('market_id', '-') }"),
+            (f"Last price: {sp_price:.3f}" if sp_price is not None else ("Last price: N/A" if lang == "en" else "현재가: N/A")),
+            (f"5m move: {sp_delta:+.3f} ({signal_label(sp_delta)})" if sp_delta is not None else ("5m move: N/A" if lang == "en" else "5분 변화: N/A")),
+        ]
+        for b in bullets:
+            st.write(f"- {b}")
+
+        caution = (
+            f"{T['caution']}: Risk is {risk_word}. React to change, don't overreact to noise."
+            if lang == "en"
+            else f"{T['caution']}: 현재 리스크는 {risk_word} 수준입니다. 노이즈보다 변화 방향에 집중하세요."
+        )
+        st.caption(caution)
+        st.caption(T["safety_note"])
+
+        movers_df = build_top_movers_df(market_items, top_n)
+        st.write(f"### {T['top_movers_now']}")
+        if movers_df.empty:
+            st.caption(T["no_markets"])
+        else:
+            st.dataframe(movers_df, use_container_width=True, hide_index=True)
+
+        st.write(f"### {T['live_storyline']}")
+        tab1, tab2, tab3 = st.tabs([T["story_pulse"], T["story_model_edge"], T["story_risk_gate"]])
+        with tab1:
+            pulse_txt = (
+                f"Market pulse is {signal_label(sp_delta)}. The spotlight market is at {sp_price:.3f} and moving {sp_delta:+.3f} over 5 minutes."
+                if sp_price is not None and sp_delta is not None
+                else "Pulse is mixed right now. Watch the next few updates for direction."
+            )
+            if lang == "kr":
+                pulse_txt = (
+                    f"시장 펄스는 {signal_label(sp_delta)} 입니다. 스포트라이트 마켓은 {sp_price:.3f}, 최근 5분 {sp_delta:+.3f} 변화입니다."
+                    if sp_price is not None and sp_delta is not None
+                    else "현재 펄스가 혼재되어 있습니다. 다음 몇 번의 업데이트에서 방향을 확인하세요."
+                )
+            st.info(pulse_txt)
+        with tab2:
+            edge_txt = (
+                f"Model edge looks {'healthy' if not math.isnan(avg_trust) and avg_trust >= 0.65 else 'fragile'} with average trust {avg_trust:.3f}."
+                if not math.isnan(avg_trust)
+                else "Model edge is unclear because trust data is limited."
+            )
+            if lang == "kr":
+                edge_txt = (
+                    f"평균 신뢰도 {avg_trust:.3f} 기준 모델 우위는 {'양호' if not math.isnan(avg_trust) and avg_trust >= 0.65 else '취약'}합니다."
+                    if not math.isnan(avg_trust)
+                    else "신뢰도 데이터가 제한되어 모델 우위를 판단하기 어렵습니다."
+                )
+            st.info(edge_txt)
+        with tab3:
+            risk_txt = (
+                f"Risk gate is {badge_text}. High alerts: {high_alerts}. Use smaller position size until risk cools down."
+                if lang == "en"
+                else f"리스크 게이트는 {badge_text} 상태이며 High alerts는 {high_alerts}건입니다. 리스크 완화 전에는 보수적으로 대응하세요."
+            )
+            st.info(risk_txt)
 
     if sc_err or al_err:
         st.error(T["safe_api_error"])
         st.caption(f"scoreboard={sc_err}, alerts={al_err}")
     else:
-        score_items = scoreboard.get("items", [])
-        alert_items = alerts.get("items", [])
-        score_df = pd.DataFrame(score_items)
-        alert_df = pd.DataFrame(alert_items)
-
-        market_count = len(score_df)
-        avg_trust = float(score_df["trust_score"].dropna().mean()) if "trust_score" in score_df else float("nan")
-        high_alerts = int((alert_df["severity"] == "high").sum()) if "severity" in alert_df else 0
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Markets", market_count)

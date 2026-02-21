@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from datetime import date, datetime, timezone
 from math import ceil
 from pathlib import Path
-from typing import Deque, Optional
+from typing import Any, Deque, Mapping, Optional
 
 import os
 import yaml
@@ -267,6 +267,90 @@ def get_market_metrics(
     return metrics
 
 
+def _warn(meta: dict[str, Any], code: str) -> None:
+    warnings = meta.setdefault("warnings", [])
+    if isinstance(warnings, list) and code not in warnings:
+        warnings.append(code)
+
+
+def _quantile_key(value: float) -> str:
+    return str(value)
+
+
+def _sanitize_forecast_payload(
+    *,
+    raw: Mapping[str, Any] | None,
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    src: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+
+    out: dict[str, Any] = {}
+    meta_raw = src.get("meta")
+    meta = dict(meta_raw) if isinstance(meta_raw, dict) else {}
+    if meta_raw is not None and not isinstance(meta_raw, dict):
+        _warn(meta, "COMPARE_SANITIZED_META_CONTAINER")
+
+    fallback_fields = ["market_id", "as_of_ts", "freq", "horizon_steps", "quantiles"]
+    for field in fallback_fields:
+        value = src.get(field)
+        if value is None:
+            value = request_payload.get(field)
+            _warn(meta, f"COMPARE_SANITIZED_MISSING_FIELD_{field.upper()}")
+        out[field] = value
+
+    quantiles = out.get("quantiles")
+    if not isinstance(quantiles, list) or not quantiles:
+        out["quantiles"] = request_payload.get("quantiles", [0.1, 0.5, 0.9])
+        _warn(meta, "COMPARE_SANITIZED_QUANTILES")
+    else:
+        clean_quantiles: list[float] = []
+        for item in quantiles:
+            try:
+                clean_quantiles.append(float(item))
+            except (TypeError, ValueError):
+                _warn(meta, "COMPARE_SANITIZED_QUANTILES")
+        if not clean_quantiles:
+            clean_quantiles = request_payload.get("quantiles", [0.1, 0.5, 0.9])
+            _warn(meta, "COMPARE_SANITIZED_QUANTILES")
+        out["quantiles"] = clean_quantiles
+
+    yhat_q_raw = src.get("yhat_q")
+    clean_yhat_q: dict[str, list[float]] = {}
+    if not isinstance(yhat_q_raw, dict):
+        _warn(meta, "COMPARE_SANITIZED_YHAT_Q_CONTAINER")
+        yhat_q_raw = {}
+
+    for q in out["quantiles"]:
+        q_key = _quantile_key(float(q))
+        series = yhat_q_raw.get(q_key)
+        if not isinstance(series, list):
+            if series is not None:
+                _warn(meta, f"COMPARE_SANITIZED_QUANTILE_SERIES_{q_key}")
+            clean_yhat_q[q_key] = []
+            continue
+
+        clean_series: list[float] = []
+        saw_bad_value = False
+        for item in series:
+            try:
+                clean_series.append(float(item))
+            except (TypeError, ValueError):
+                saw_bad_value = True
+        if saw_bad_value:
+            _warn(meta, f"COMPARE_SANITIZED_QUANTILE_VALUE_{q_key}")
+        clean_yhat_q[q_key] = clean_series
+
+    out["yhat_q"] = clean_yhat_q
+    out["meta"] = meta
+
+    conformal = src.get("conformal_last_step")
+    out["conformal_last_step"] = conformal if isinstance(conformal, dict) else None
+    if conformal is not None and not isinstance(conformal, dict):
+        _warn(meta, "COMPARE_SANITIZED_CONFORMAL_LAST_STEP")
+
+    return out
+
+
 @app.post("/markets/{market_id}/comparison", response_model=MarketComparisonResponse)
 def post_market_comparison(
     market_id: str,
@@ -276,16 +360,19 @@ def post_market_comparison(
         raise HTTPException(status_code=400, detail="market_id in path/body mismatch")
 
     base_req = payload.forecast.model_dump(mode="json")
-    tollama = _tsfm_service.forecast(base_req)
+    tollama_raw = _tsfm_service.forecast(base_req)
 
     baseline_req = dict(base_req)
     baseline_req["liquidity_bucket"] = payload.baseline_liquidity_bucket
-    baseline = _tsfm_service.forecast(baseline_req)
+    baseline_raw = _tsfm_service.forecast(baseline_req)
+
+    tollama = _sanitize_forecast_payload(raw=tollama_raw, request_payload=base_req)
+    baseline = _sanitize_forecast_payload(raw=baseline_raw, request_payload=baseline_req)
 
     t50 = (tollama.get("yhat_q") or {}).get("0.5") or []
     b50 = (baseline.get("yhat_q") or {}).get("0.5") or []
     delta_last_q50 = None
-    if t50 and b50:
+    if t50 and b50 and isinstance(t50[-1], (int, float)) and isinstance(b50[-1], (int, float)):
         delta_last_q50 = float(t50[-1]) - float(b50[-1])
 
     return MarketComparisonResponse(

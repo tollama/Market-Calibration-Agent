@@ -130,3 +130,82 @@ def test_market_comparison_endpoint(monkeypatch):
     assert payload["baseline"]["meta"]["runtime"] == "baseline"
     assert payload["tollama"]["meta"]["runtime"] == "tollama"
     assert payload["delta_last_q50"] == pytest.approx(0.1)
+
+
+def test_market_comparison_malformed_yhat_q_container_is_sanitized(monkeypatch):
+    class StubService:
+        def forecast(self, request):
+            runtime = "baseline" if request.get("liquidity_bucket") == "low" else "tollama"
+            return {
+                "market_id": request["market_id"],
+                "as_of_ts": request["as_of_ts"],
+                "freq": request["freq"],
+                "horizon_steps": request["horizon_steps"],
+                "quantiles": [0.1, 0.5, 0.9],
+                "yhat_q": "bad-container",
+                "meta": {"runtime": runtime},
+            }
+
+    monkeypatch.setattr(api_app, "_tsfm_service", StubService())
+    client = TestClient(api_app.app)
+
+    body = {
+        "forecast": {
+            "market_id": "mkt-90",
+            "as_of_ts": "2026-02-21T00:00:00Z",
+            "freq": "5m",
+            "horizon_steps": 3,
+            "quantiles": [0.1, 0.5, 0.9],
+            "y": [0.45, 0.46, 0.47, 0.48],
+        },
+        "baseline_liquidity_bucket": "low",
+    }
+    response = client.post("/markets/mkt-90/comparison", json=body)
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["baseline"]["yhat_q"]["0.5"] == []
+    assert payload["tollama"]["yhat_q"]["0.5"] == []
+    assert payload["delta_last_q50"] is None
+    assert "COMPARE_SANITIZED_YHAT_Q_CONTAINER" in payload["baseline"]["meta"]["warnings"]
+    assert "COMPARE_SANITIZED_YHAT_Q_CONTAINER" in payload["tollama"]["meta"]["warnings"]
+
+
+def test_market_comparison_non_numeric_quantiles_are_sanitized(monkeypatch):
+    class StubService:
+        def forecast(self, request):
+            runtime = "baseline" if request.get("liquidity_bucket") == "low" else "tollama"
+            q50 = [0.5, "oops", None] if runtime == "baseline" else [0.6, "bad"]
+            return {
+                "market_id": request["market_id"],
+                "as_of_ts": request["as_of_ts"],
+                "freq": request["freq"],
+                "horizon_steps": request["horizon_steps"],
+                "quantiles": [0.1, 0.5, 0.9],
+                "yhat_q": {"0.1": [0.4], "0.5": q50, "0.9": [0.7]},
+                "meta": {"runtime": runtime},
+            }
+
+    monkeypatch.setattr(api_app, "_tsfm_service", StubService())
+    client = TestClient(api_app.app)
+
+    body = {
+        "forecast": {
+            "market_id": "mkt-90",
+            "as_of_ts": "2026-02-21T00:00:00Z",
+            "freq": "5m",
+            "horizon_steps": 3,
+            "quantiles": [0.1, 0.5, 0.9],
+            "y": [0.45, 0.46, 0.47, 0.48],
+        },
+        "baseline_liquidity_bucket": "low",
+    }
+    response = client.post("/markets/mkt-90/comparison", json=body)
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["baseline"]["yhat_q"]["0.5"] == [0.5]
+    assert payload["tollama"]["yhat_q"]["0.5"] == [0.6]
+    assert payload["delta_last_q50"] == pytest.approx(0.1)
+    assert "COMPARE_SANITIZED_QUANTILE_VALUE_0.5" in payload["baseline"]["meta"]["warnings"]
+    assert "COMPARE_SANITIZED_QUANTILE_VALUE_0.5" in payload["tollama"]["meta"]["warnings"]

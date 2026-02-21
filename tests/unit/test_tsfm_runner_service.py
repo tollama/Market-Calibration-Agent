@@ -53,6 +53,17 @@ def test_tsfm_service_happy_path_returns_quantiles() -> None:
     assert set(response["yhat_q"]) == {"0.1", "0.5", "0.9"}
 
 
+def test_tsfm_service_handles_none_liquidity_bucket_without_crashing() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+    req = {**_request(), "liquidity_bucket": None}
+
+    response = service.forecast(req)
+
+    assert response["meta"]["runtime"] == "tollama"
+    assert response["meta"]["fallback_used"] is False
+    assert set(response["yhat_q"]) == {"0.1", "0.5", "0.9"}
+
+
 def test_tsfm_service_falls_back_to_baseline_on_adapter_error() -> None:
     service = TSFMRunnerService(adapter=_FakeAdapter(fail=True))
 

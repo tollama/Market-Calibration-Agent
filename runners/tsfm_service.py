@@ -453,7 +453,8 @@ class TSFMRunnerService:
         if len(y_raw) < self.config.min_points_for_tsfm:
             fallback_reason = "too_few_points"
 
-        if request.get("liquidity_bucket", "").lower() == self.config.baseline_only_liquidity:
+        liquidity_bucket = str(request.get("liquidity_bucket") or "").lower()
+        if liquidity_bucket == self.config.baseline_only_liquidity:
             fallback_reason = "baseline_only_liquidity_bucket"
 
         inferred_max_gap = self._extract_max_gap_minutes(request, freq_seconds=step_seconds)

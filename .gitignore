@@ -5,6 +5,7 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv311/
 venv/
 env/
 
@@ -29,6 +30,34 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Data files
+*.db
+*.sqlite
+*.sqlite3
+*.pkl
+*.parquet
+*.csv
+data/raw/
+/raw/
+/output/
+/results/
+
+# Logs and temporary files
+logs/
+*.log
+*.pid
+
+# IDE swap files
+*.swp
+*.swo
+*~
+
+# Mac OS
+Thumbs.db
+
+# Jupyter notebooks
+.ipynb_checkpoints/
 
 # Verification artifacts
 artifacts/

@@ -1,6 +1,6 @@
 # Live Demo Security Validation Check
 
-- Executed at (UTC): 2026-02-21T07:04:57Z
+- Executed at (UTC): 2026-02-21T15:35:48Z
 - API base: http://127.0.0.1:8000
 - Script: scripts/live_demo_security_check.sh
 
@@ -10,7 +10,7 @@
 |---|---:|---:|---|
 | Unauthorized request to POST /tsfm/forecast | 401 | 401 | PASS |
 | Valid token happy path | 200 | 200 | PASS |
-| Burst rate limit | 429 + Retry-After | 429 + 60 | PASS |
+| Burst rate limit | 429 + Retry-After | 429 + 57 | PASS |
 
 ## Happy Path Response Summary
 

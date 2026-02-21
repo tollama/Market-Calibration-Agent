@@ -1,0 +1,1 @@
+[{"alert_id": "a-1", "market_id": "mkt-90", "ts": "2026-02-20T11:00:00Z", "severity": "HIGH", "reason_codes": ["BAND_BREACH"], "evidence": {"p_yes": 0.81}, "llm_explain_5lines": ["1", "2", "3", "4", "5"]}]

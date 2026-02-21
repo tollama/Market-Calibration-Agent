@@ -1,0 +1,1 @@
+[{"market_id": "mkt-90", "window": "90d", "trust_score": 74.2, "brier": 0.18, "logloss": 0.54, "ece": 0.06, "liquidity_bucket": "MID", "category": "politics", "as_of": "2026-02-20T00:00:00Z"}, {"market_id": "mkt-90", "window": "30d", "trust_score": 70.0, "brier": 0.2, "logloss": 0.6, "ece": 0.08, "liquidity_bucket": "MID", "category": "politics", "as_of": "2026-02-20T00:00:00Z"}]

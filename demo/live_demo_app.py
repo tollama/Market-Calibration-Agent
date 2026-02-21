@@ -33,7 +33,7 @@ I18N = {
         "trust_card": "Trust score combines calibration quality and alert context.",
         "uncertainty_card": "Wider q10-q90 bands indicate higher forecast uncertainty.",
         "help_label": "What does this mean?",
-        "overview_kpi_help": "Markets shows how many markets are tracked now. Avg trust is overall reliability (higher is better). High alerts are priority issues to check first.",
+        "overview_kpi_help": "Calibrated markets shows scoreboard coverage. Top list markets shows how many markets are in the live sample top list. Avg trust is overall reliability (higher is better). High alerts are priority issues to check first.",
         "overview_trust_alert_help": "Trust table ranks markets by confidence. Alerts chart shows where risks are concentrated by severity.",
         "detail_forecast_help": "q50 is the most typical path. q10 and q90 are lower/upper likely bounds. A wider gap means less certainty.",
         "compare_help": "Baseline is fallback logic. Tollama is the model path. Δ q50 is the median difference at the last step (near 0 = similar).",
@@ -44,6 +44,11 @@ I18N = {
         "top_n_markets": "Top N markets",
         "top_markets_title": "Top markets",
         "top_markets_help": "Top list by latest YES price.",
+        "kpi_calibrated_markets": "Calibrated markets",
+        "kpi_top_list_markets": "Top list markets",
+        "kpi_avg_trust": "Avg trust",
+        "kpi_high_alerts": "High alerts",
+        "storyline_source_note": "Top list count comes from live sample list; Calibrated markets comes from scoreboard coverage.",
         "so_what": "So what?",
         "evidence": "Evidence",
         "confidence": "Confidence / Caution",
@@ -100,7 +105,7 @@ I18N = {
         "trust_card": "신뢰점수는 캘리브레이션 품질과 경보 맥락을 함께 반영합니다.",
         "uncertainty_card": "q10-q90 구간 폭이 넓을수록 예측 불확실성이 큽니다.",
         "help_label": "이 결과가 의미하는 것",
-        "overview_kpi_help": "Markets는 현재 추적 중인 마켓 수입니다. Avg trust는 전체 신뢰도(높을수록 좋음)이고, High alerts는 우선 확인이 필요한 이슈 수입니다.",
+        "overview_kpi_help": "캘리브레이션 마켓은 스코어보드 커버리지 기준 마켓 수입니다. Top list 마켓은 라이브 샘플 상위 목록의 마켓 수입니다. Avg trust는 전체 신뢰도(높을수록 좋음)이고, High alerts는 우선 확인이 필요한 이슈 수입니다.",
         "overview_trust_alert_help": "신뢰 테이블은 마켓을 신뢰도 순으로 보여줍니다. 경보 차트는 심각도별로 위험이 어디에 몰렸는지 보여줍니다.",
         "detail_forecast_help": "q50은 가장 대표적인 경로입니다. q10/q90은 하단/상단 가능 범위입니다. 간격이 넓을수록 확신이 낮습니다.",
         "compare_help": "Baseline은 기본(대체) 로직, Tollama는 모델 예측입니다. Δ q50은 마지막 시점 중앙값 차이(0에 가까우면 유사)입니다.",
@@ -111,6 +116,11 @@ I18N = {
         "top_n_markets": "상위 N개 마켓",
         "top_markets_title": "상위 마켓",
         "top_markets_help": "최신 YES 가격 기준 상위 목록입니다.",
+        "kpi_calibrated_markets": "캘리브레이션 마켓",
+        "kpi_top_list_markets": "Top list 마켓",
+        "kpi_avg_trust": "평균 신뢰도",
+        "kpi_high_alerts": "High 경보",
+        "storyline_source_note": "Top list 수치는 라이브 샘플 목록 기준이며, 캘리브레이션 마켓 수는 스코어보드 커버리지 기준입니다.",
         "so_what": "핵심 요약",
         "evidence": "근거",
         "confidence": "확신 / 주의",
@@ -541,6 +551,7 @@ if pages[page] == "overview":
     alert_df = pd.DataFrame(alert_items)
 
     market_count = len(score_df)
+    top_list_count = len(top_df)
     avg_trust = float(score_df["trust_score"].dropna().mean()) if "trust_score" in score_df else float("nan")
     high_alerts = int((alert_df["severity"].astype(str).str.upper() == "HIGH").sum()) if "severity" in alert_df else 0
 
@@ -591,6 +602,7 @@ if pages[page] == "overview":
             st.dataframe(movers_df, use_container_width=True, hide_index=True)
 
         st.write(f"### {T['live_storyline']}")
+        st.caption(T["storyline_source_note"])
         tab1, tab2, tab3 = st.tabs([T["story_pulse"], T["story_model_edge"], T["story_risk_gate"]])
         with tab1:
             pulse_txt = (
@@ -632,10 +644,11 @@ if pages[page] == "overview":
         st.caption(f"scoreboard={sc_err}, alerts={al_err}")
     else:
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Markets", market_count)
-        c2.metric("Avg trust", "-" if math.isnan(avg_trust) else f"{avg_trust:.3f}")
-        c3.metric("High alerts", high_alerts)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(T["kpi_calibrated_markets"], market_count)
+        c2.metric(T["kpi_top_list_markets"], top_list_count)
+        c3.metric(T["kpi_avg_trust"], "-" if math.isnan(avg_trust) else f"{avg_trust:.3f}")
+        c4.metric(T["kpi_high_alerts"], high_alerts)
         info_toggle("overview_kpi", T["overview_kpi_help"])
 
         st.info(T["overview_help"])

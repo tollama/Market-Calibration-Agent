@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -11,6 +13,7 @@ import streamlit as st
 
 API_BASE = os.getenv("LIVE_DEMO_API_BASE", "http://127.0.0.1:8000")
 FORECAST_TOKEN = os.getenv("TSFM_FORECAST_API_TOKEN", "tsfm-dev-token")
+SAMPLE_DATA_PATH = Path(__file__).resolve().parents[1] / "artifacts/demo/live_demo_sample_data.json"
 
 st.set_page_config(page_title="Market Calibration LIVE Demo v2", layout="wide")
 
@@ -35,6 +38,9 @@ I18N = {
         "detail_forecast_help": "q50 is the most typical path. q10 and q90 are lower/upper likely bounds. A wider gap means less certainty.",
         "compare_help": "Baseline is fallback logic. Tollama is the model path. Δ q50 is the median difference at the last step (near 0 = similar).",
         "obs_help": "Requests = total forecast calls. Error rate = failed call share. Fallback = backup path used when primary fails. Cache hit rate = reused results share.",
+        "market_source_sample": "Using local live sample markets.",
+        "market_source_api": "Using API market list.",
+        "market_meta_sample_fallback": "Live API detail not found (404). Showing sample metadata.",
     },
     "kr": {
         "app_title": "📊 마켓 캘리브레이션 LIVE 데모 v2",
@@ -56,6 +62,9 @@ I18N = {
         "detail_forecast_help": "q50은 가장 대표적인 경로입니다. q10/q90은 하단/상단 가능 범위입니다. 간격이 넓을수록 확신이 낮습니다.",
         "compare_help": "Baseline은 기본(대체) 로직, Tollama는 모델 예측입니다. Δ q50은 마지막 시점 중앙값 차이(0에 가까우면 유사)입니다.",
         "obs_help": "Requests는 총 예측 호출 수, Error rate는 실패 비율, Fallback은 기본 경로로 대체된 횟수, Cache hit rate는 재사용된 결과 비율입니다.",
+        "market_source_sample": "로컬 live 샘플 마켓 목록을 사용 중입니다.",
+        "market_source_api": "API 마켓 목록을 사용 중입니다.",
+        "market_meta_sample_fallback": "Live API 상세(404)를 찾지 못해 샘플 메타데이터를 표시합니다.",
     },
 }
 
@@ -104,6 +113,43 @@ def safe_post(path: str, payload: dict, *, auth: bool = False) -> tuple[Any | No
         return None, f"HTTP {exc.response.status_code}"
     except httpx.HTTPError:
         return None, "network-error"
+
+
+@st.cache_data(ttl=30)
+def load_sample_markets() -> list[dict[str, Any]]:
+    if not SAMPLE_DATA_PATH.exists():
+        return []
+    try:
+        payload = json.loads(SAMPLE_DATA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    items = payload.get("items", [])
+    if not isinstance(items, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        market_id = str(item.get("market_id", "")).strip()
+        if not market_id:
+            continue
+        y_vals = item.get("y", [])
+        y = [float(v) for v in y_vals if isinstance(v, (int, float)) and 0 <= float(v) <= 1]
+        cleaned.append(
+            {
+                "market_id": market_id,
+                "title": str(item.get("title") or "").strip(),
+                "question": str(item.get("question") or "").strip(),
+                "as_of_ts": item.get("as_of_ts"),
+                "y": y,
+            }
+        )
+    return cleaned
+
+
+def market_label(item: dict[str, Any]) -> str:
+    prompt = item.get("question") or item.get("title") or "-"
+    return f"{item.get('market_id')} | {prompt}"
 
 
 def parse_series(series_text: str) -> list[float]:
@@ -198,156 +244,203 @@ if pages[page] == "overview":
         ex2.warning("🌫️ " + T["uncertainty_card"])
 
 elif pages[page] == "detail":
-    markets, mk_err = safe_get("/markets")
+    sample_items = load_sample_markets()
+    sample_by_id = {m["market_id"]: m for m in sample_items}
+
+    market_items: list[dict[str, Any]] = []
+    using_sample = bool(sample_items)
+    mk_err = None
+
+    if using_sample:
+        market_items = sample_items
+        st.caption(T["market_source_sample"])
+    else:
+        markets, mk_err = safe_get("/markets")
+        market_items = [m for m in (markets or {}).get("items", []) if m.get("market_id")]
+        st.caption(T["market_source_api"])
+
     if mk_err:
         st.error(T["safe_api_error"])
         st.caption(f"markets={mk_err}")
+    elif not market_items:
+        st.warning("No markets available.")
     else:
-        ids = [m.get("market_id") for m in markets.get("items", []) if m.get("market_id")]
-        if not ids:
-            st.warning("No markets available.")
-        else:
-            market_id = st.selectbox("Market", ids)
-            detail, dt_err = safe_get(f"/markets/{market_id}")
-            if dt_err:
-                st.error(T["safe_api_error"])
-                st.caption(f"detail={dt_err}")
-            else:
-                d1, d2, d3 = st.columns(3)
-                d1.metric("Trust", f"{detail.get('trust_score', 0):.3f}" if detail.get("trust_score") is not None else "-")
-                d2.metric("Category", detail.get("category") or "-")
-                d3.metric("Liquidity", detail.get("liquidity_bucket") or "-")
+        labels = {market_label(item): item for item in market_items}
+        selected_label = st.selectbox("Market", list(labels.keys()))
+        selected = labels[selected_label]
+        market_id = str(selected.get("market_id"))
 
-            y = st.text_area(
-                "Input y values (comma-separated)",
-                "0.45,0.46,0.47,0.48,0.49,0.50,0.52,0.51,0.53,0.54",
-            )
-            if st.button("Run forecast"):
-                try:
-                    vals = parse_series(y)
-                except ValueError:
-                    st.warning(T["invalid_series"])
-                    vals = []
+        detail, dt_err = safe_get(f"/markets/{market_id}")
+        if dt_err and dt_err != "HTTP 404":
+            st.error(T["safe_api_error"])
+            st.caption(f"detail={dt_err}")
+        elif dt_err == "HTTP 404" and market_id in sample_by_id:
+            sample_meta = sample_by_id[market_id]
+            st.info(T["market_meta_sample_fallback"])
+            d1, d2, d3 = st.columns(3)
+            d1.metric("Market ID", market_id)
+            d2.metric("Question", sample_meta.get("question") or sample_meta.get("title") or "-")
+            d3.metric("As of", str(sample_meta.get("as_of_ts") or "-"))
+        elif detail:
+            d1, d2, d3 = st.columns(3)
+            d1.metric("Trust", f"{detail.get('trust_score', 0):.3f}" if detail.get("trust_score") is not None else "-")
+            d2.metric("Category", detail.get("category") or "-")
+            d3.metric("Liquidity", detail.get("liquidity_bucket") or "-")
 
-                if vals:
-                    payload = {
+        default_y = selected.get("y") if isinstance(selected.get("y"), list) else []
+        default_y_text = ",".join(f"{float(v):.4f}".rstrip("0").rstrip(".") for v in default_y[:128])
+        if not default_y_text:
+            default_y_text = "0.45,0.46,0.47,0.48,0.49,0.50,0.52,0.51,0.53,0.54"
+
+        y = st.text_area(
+            "Input y values (comma-separated)",
+            default_y_text,
+            key=f"detail-y-{market_id}",
+        )
+        if st.button("Run forecast"):
+            try:
+                vals = parse_series(y)
+            except ValueError:
+                st.warning(T["invalid_series"])
+                vals = []
+
+            if vals:
+                payload = {
+                    "market_id": market_id,
+                    "as_of_ts": datetime.now(timezone.utc).isoformat(),
+                    "freq": "5m",
+                    "horizon_steps": 6,
+                    "quantiles": [0.1, 0.5, 0.9],
+                    "y": vals,
+                }
+                fc, fc_err = safe_post("/tsfm/forecast", payload, auth=True)
+                if fc_err:
+                    st.error(T["safe_api_error"])
+                    st.caption(f"forecast={fc_err}")
+                else:
+                    yhat = fc.get("yhat_q", {})
+                    q10 = yhat.get("0.1", [])
+                    q50 = yhat.get("0.5", [])
+                    q90 = yhat.get("0.9", [])
+                    horizon = list(range(1, max(len(q10), len(q50), len(q90)) + 1))
+                    fc_df = pd.DataFrame({"step": horizon})
+                    fc_df["q10"] = q10[: len(horizon)]
+                    fc_df["q50"] = q50[: len(horizon)]
+                    fc_df["q90"] = q90[: len(horizon)]
+
+                    st.write("### Forecast (q10 / q50 / q90)")
+                    info_toggle("detail_forecast", T["detail_forecast_help"])
+                    st.line_chart(fc_df.set_index("step"))
+                    st.dataframe(fc_df, use_container_width=True)
+
+                    if q10 and q90 and q50:
+                        width = q90[-1] - q10[-1]
+                        st.write("### Explainability")
+                        e1, e2 = st.columns(2)
+                        e1.info(f"Median path (q50) last step: {q50[-1]:.3f}")
+                        e2.warning(f"Uncertainty width (q90-q10) last step: {width:.3f}")
+
+        pm, pm_err = safe_get(f"/postmortem/{market_id}")
+        if not pm_err and pm:
+            with st.expander("Latest Postmortem", expanded=False):
+                st.markdown(pm.get("content", ""))
+
+elif pages[page] == "compare":
+    sample_items = load_sample_markets()
+    using_sample = bool(sample_items)
+    mk_err = None
+
+    if using_sample:
+        market_items = sample_items
+        st.caption(T["market_source_sample"])
+    else:
+        markets, mk_err = safe_get("/markets")
+        market_items = [m for m in (markets or {}).get("items", []) if m.get("market_id")]
+        st.caption(T["market_source_api"])
+
+    if mk_err:
+        st.error(T["safe_api_error"])
+        st.caption(f"markets={mk_err}")
+    elif not market_items:
+        st.warning("No markets available.")
+    else:
+        labels = {market_label(item): item for item in market_items}
+        selected_label = st.selectbox("Market", list(labels.keys()), key="cmp-market")
+        selected = labels[selected_label]
+        market_id = str(selected.get("market_id"))
+
+        default_y = selected.get("y") if isinstance(selected.get("y"), list) else []
+        default_y_text = ",".join(f"{float(v):.4f}".rstrip("0").rstrip(".") for v in default_y[:128])
+        if not default_y_text:
+            default_y_text = "0.41,0.42,0.43,0.44,0.45,0.46,0.47,0.48,0.49,0.50"
+
+        y = st.text_area("Input y values", default_y_text, key=f"cmp-y-{market_id}")
+
+        if st.button("Run comparison"):
+            try:
+                vals = parse_series(y)
+            except ValueError:
+                st.warning(T["invalid_series"])
+                vals = []
+
+            if vals:
+                payload = {
+                    "forecast": {
                         "market_id": market_id,
                         "as_of_ts": datetime.now(timezone.utc).isoformat(),
                         "freq": "5m",
                         "horizon_steps": 6,
                         "quantiles": [0.1, 0.5, 0.9],
                         "y": vals,
-                    }
-                    fc, fc_err = safe_post("/tsfm/forecast", payload, auth=True)
-                    if fc_err:
-                        st.error(T["safe_api_error"])
-                        st.caption(f"forecast={fc_err}")
-                    else:
-                        yhat = fc.get("yhat_q", {})
-                        q10 = yhat.get("0.1", [])
-                        q50 = yhat.get("0.5", [])
-                        q90 = yhat.get("0.9", [])
-                        horizon = list(range(1, max(len(q10), len(q50), len(q90)) + 1))
-                        fc_df = pd.DataFrame({"step": horizon})
-                        fc_df["q10"] = q10[: len(horizon)]
-                        fc_df["q50"] = q50[: len(horizon)]
-                        fc_df["q90"] = q90[: len(horizon)]
+                    },
+                    "baseline_liquidity_bucket": "low",
+                }
+                cmp_result, cmp_err = safe_post(f"/markets/{market_id}/comparison", payload)
+                if cmp_err:
+                    st.error(T["safe_api_error"])
+                    st.caption(f"comparison={cmp_err}")
+                else:
+                    baseline = cmp_result.get("baseline", {}).get("yhat_q", {})
+                    tollama = cmp_result.get("tollama", {}).get("yhat_q", {})
 
-                        st.write("### Forecast (q10 / q50 / q90)")
-                        info_toggle("detail_forecast", T["detail_forecast_help"])
-                        st.line_chart(fc_df.set_index("step"))
-                        st.dataframe(fc_df, use_container_width=True)
+                    def last_val(block: dict[str, list[float]], q: str) -> float | None:
+                        seq = block.get(q, [])
+                        return seq[-1] if seq else None
 
-                        if q10 and q90 and q50:
-                            width = q90[-1] - q10[-1]
-                            st.write("### Explainability")
-                            e1, e2 = st.columns(2)
-                            e1.info(f"Median path (q50) last step: {q50[-1]:.3f}")
-                            e2.warning(f"Uncertainty width (q90-q10) last step: {width:.3f}")
+                    rows = []
+                    for q in ["0.1", "0.5", "0.9"]:
+                        b = last_val(baseline, q)
+                        t = last_val(tollama, q)
+                        d = (t - b) if b is not None and t is not None else None
+                        rows.append(
+                            {
+                                "quantile": q,
+                                "baseline_last": b,
+                                "tollama_last": t,
+                                "delta": d,
+                            }
+                        )
 
-            pm, pm_err = safe_get(f"/postmortem/{market_id}")
-            if not pm_err and pm:
-                with st.expander("Latest Postmortem", expanded=False):
-                    st.markdown(pm.get("content", ""))
+                    cmp_df = pd.DataFrame(rows)
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.write("### Baseline vs Tollama (last step)")
+                        st.dataframe(cmp_df, use_container_width=True)
+                    with c2:
+                        d50 = cmp_result.get("delta_last_q50")
+                        if d50 is None:
+                            st.info("Δ q50 unavailable")
+                        elif abs(d50) < 0.01:
+                            st.success(f"Δ q50: {d50:+.4f} (aligned)")
+                        elif abs(d50) < 0.03:
+                            st.warning(f"Δ q50: {d50:+.4f} (watch)")
+                        else:
+                            st.error(f"Δ q50: {d50:+.4f} (large)")
 
-elif pages[page] == "compare":
-    markets, mk_err = safe_get("/markets")
-    if mk_err:
-        st.error(T["safe_api_error"])
-        st.caption(f"markets={mk_err}")
-    else:
-        ids = [m.get("market_id") for m in markets.get("items", []) if m.get("market_id")]
-        if not ids:
-            st.warning("No markets available.")
-        else:
-            market_id = st.selectbox("Market", ids, key="cmp-market")
-            y = st.text_area("Input y values", "0.41,0.42,0.43,0.44,0.45,0.46,0.47,0.48,0.49,0.50", key="cmp-y")
+                    info_toggle("compare", T["compare_help"])
 
-            if st.button("Run comparison"):
-                try:
-                    vals = parse_series(y)
-                except ValueError:
-                    st.warning(T["invalid_series"])
-                    vals = []
-
-                if vals:
-                    payload = {
-                        "forecast": {
-                            "market_id": market_id,
-                            "as_of_ts": datetime.now(timezone.utc).isoformat(),
-                            "freq": "5m",
-                            "horizon_steps": 6,
-                            "quantiles": [0.1, 0.5, 0.9],
-                            "y": vals,
-                        },
-                        "baseline_liquidity_bucket": "low",
-                    }
-                    cmp_result, cmp_err = safe_post(f"/markets/{market_id}/comparison", payload)
-                    if cmp_err:
-                        st.error(T["safe_api_error"])
-                        st.caption(f"comparison={cmp_err}")
-                    else:
-                        baseline = cmp_result.get("baseline", {}).get("yhat_q", {})
-                        tollama = cmp_result.get("tollama", {}).get("yhat_q", {})
-
-                        def last_val(block: dict[str, list[float]], q: str) -> float | None:
-                            seq = block.get(q, [])
-                            return seq[-1] if seq else None
-
-                        rows = []
-                        for q in ["0.1", "0.5", "0.9"]:
-                            b = last_val(baseline, q)
-                            t = last_val(tollama, q)
-                            d = (t - b) if b is not None and t is not None else None
-                            rows.append(
-                                {
-                                    "quantile": q,
-                                    "baseline_last": b,
-                                    "tollama_last": t,
-                                    "delta": d,
-                                }
-                            )
-
-                        cmp_df = pd.DataFrame(rows)
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.write("### Baseline vs Tollama (last step)")
-                            st.dataframe(cmp_df, use_container_width=True)
-                        with c2:
-                            d50 = cmp_result.get("delta_last_q50")
-                            if d50 is None:
-                                st.info("Δ q50 unavailable")
-                            elif abs(d50) < 0.01:
-                                st.success(f"Δ q50: {d50:+.4f} (aligned)")
-                            elif abs(d50) < 0.03:
-                                st.warning(f"Δ q50: {d50:+.4f} (watch)")
-                            else:
-                                st.error(f"Δ q50: {d50:+.4f} (large)")
-
-                        info_toggle("compare", T["compare_help"])
-
-                        st.write("### Explainability")
-                        st.info("Compare baseline fallback and tollama path; use Δq50 + interval width to judge trust.")
+                    st.write("### Explainability")
+                    st.info("Compare baseline fallback and tollama path; use Δq50 + interval width to judge trust.")
 
 elif pages[page] == "obs":
     try:

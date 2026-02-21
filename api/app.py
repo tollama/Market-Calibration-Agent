@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from datetime import date, datetime, timezone
 from math import ceil
-from math import ceil
 from pathlib import Path
 from typing import Deque, Optional
 
@@ -18,6 +17,11 @@ from .dependencies import LocalDerivedStore, get_derived_store
 from .schemas import (
     AlertItem,
     AlertsResponse,
+    MarketComparisonRequest,
+    MarketComparisonResponse,
+    MarketDetailResponse,
+    MarketMetricsResponse,
+    MarketsResponse,
     PostmortemResponse,
     ScoreboardItem,
     ScoreboardResponse,
@@ -199,6 +203,60 @@ def get_alerts(
     return AlertsResponse(items=items, total=total, limit=limit, offset=offset)
 
 
+@app.get("/markets", response_model=MarketsResponse)
+def get_markets(store: LocalDerivedStore = Depends(get_derived_store)) -> MarketsResponse:
+    items = store.load_markets()
+    return MarketsResponse(items=items, total=len(items))
+
+
+@app.get("/markets/{market_id}", response_model=MarketDetailResponse)
+def get_market(market_id: str, store: LocalDerivedStore = Depends(get_derived_store)) -> MarketDetailResponse:
+    market = store.load_market(market_id)
+    if market is None:
+        raise HTTPException(status_code=404, detail=f"Market not found: {market_id}")
+    return market
+
+
+@app.get("/markets/{market_id}/metrics", response_model=MarketMetricsResponse)
+def get_market_metrics(
+    market_id: str,
+    store: LocalDerivedStore = Depends(get_derived_store),
+) -> MarketMetricsResponse:
+    metrics = store.load_market_metrics(market_id)
+    if metrics is None:
+        raise HTTPException(status_code=404, detail=f"Market not found: {market_id}")
+    return metrics
+
+
+@app.post("/markets/{market_id}/comparison", response_model=MarketComparisonResponse)
+def post_market_comparison(
+    market_id: str,
+    payload: MarketComparisonRequest,
+) -> MarketComparisonResponse:
+    if payload.forecast.market_id != market_id:
+        raise HTTPException(status_code=400, detail="market_id in path/body mismatch")
+
+    base_req = payload.forecast.model_dump(mode="json")
+    tollama = _tsfm_service.forecast(base_req)
+
+    baseline_req = dict(base_req)
+    baseline_req["liquidity_bucket"] = payload.baseline_liquidity_bucket
+    baseline = _tsfm_service.forecast(baseline_req)
+
+    t50 = (tollama.get("yhat_q") or {}).get("0.5") or []
+    b50 = (baseline.get("yhat_q") or {}).get("0.5") or []
+    delta_last_q50 = None
+    if t50 and b50:
+        delta_last_q50 = float(t50[-1]) - float(b50[-1])
+
+    return MarketComparisonResponse(
+        market_id=market_id,
+        baseline=TSFMForecastResponse(**baseline),
+        tollama=TSFMForecastResponse(**tollama),
+        delta_last_q50=delta_last_q50,
+    )
+
+
 @app.get("/postmortem/{market_id}", response_model=PostmortemResponse)
 def get_postmortem(
     market_id: str,
@@ -228,11 +286,6 @@ def post_tsfm_forecast(payload: TSFMForecastRequest, request: Request) -> TSFMFo
     _tsfm_guard.enforce(request)
     result = _tsfm_service.forecast(payload.model_dump(mode="json"))
     return TSFMForecastResponse(**result)
-
-
-@app.get("/tsfm/metrics", response_model=None, response_class=PlainTextResponse)
-def get_tsfm_metrics() -> str:
-    return _tsfm_service.render_prometheus_metrics()
 
 
 @app.get("/metrics", response_class=PlainTextResponse)

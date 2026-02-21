@@ -48,6 +48,27 @@ class PostmortemResponse(BaseModel):
     source_path: str
 
 
+class MarketDetailResponse(BaseModel):
+    market_id: str
+    category: Optional[str] = None
+    liquidity_bucket: Optional[str] = None
+    trust_score: Optional[float] = None
+    as_of: Optional[datetime] = None
+    latest_alert: Optional[AlertItem] = None
+
+
+class MarketsResponse(BaseModel):
+    items: List[MarketDetailResponse] = Field(default_factory=list)
+    total: int
+
+
+class MarketMetricsResponse(BaseModel):
+    market_id: str
+    scoreboard_by_window: List[Dict[str, Any]] = Field(default_factory=list)
+    alert_total: int = 0
+    alert_severity_counts: Dict[str, int] = Field(default_factory=dict)
+
+
 class TSFMModelConfig(BaseModel):
     provider: str = "tollama"
     model_name: str = "chronos"
@@ -86,3 +107,15 @@ class TSFMForecastResponse(BaseModel):
     yhat_q: Dict[str, List[float]]
     meta: Dict[str, Any] = Field(default_factory=dict)
     conformal_last_step: Optional[Dict[str, Any]] = None
+
+
+class MarketComparisonRequest(BaseModel):
+    forecast: TSFMForecastRequest
+    baseline_liquidity_bucket: str = "low"
+
+
+class MarketComparisonResponse(BaseModel):
+    market_id: str
+    baseline: TSFMForecastResponse
+    tollama: TSFMForecastResponse
+    delta_last_q50: Optional[float] = None

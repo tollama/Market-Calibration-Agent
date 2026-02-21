@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .schemas import MarketDetailResponse, MarketMetricsResponse
+
 
 def _normalize_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -163,7 +165,6 @@ class LocalDerivedStore:
                 continue
             filtered.append(record)
 
-        # newest first for feed semantics
         filtered.sort(
             key=lambda item: _parse_record_datetime(item, "ts")
             or datetime.min.replace(tzinfo=timezone.utc),
@@ -172,6 +173,64 @@ class LocalDerivedStore:
 
         total = len(filtered)
         return filtered[offset : offset + limit], total
+
+    def load_markets(self) -> List[MarketDetailResponse]:
+        score_90 = self.load_scoreboard(window="90d")
+        alerts, _ = self.load_alerts(since=None, limit=1000, offset=0)
+
+        by_id: Dict[str, Dict[str, Any]] = {}
+        for row in score_90:
+            market_id = str(row.get("market_id") or "")
+            if not market_id:
+                continue
+            by_id.setdefault(market_id, {})
+            by_id[market_id].update(
+                {
+                    "market_id": market_id,
+                    "category": row.get("category"),
+                    "liquidity_bucket": row.get("liquidity_bucket"),
+                    "trust_score": row.get("trust_score"),
+                    "as_of": row.get("as_of"),
+                }
+            )
+
+        latest_alert: Dict[str, Dict[str, Any]] = {}
+        for row in alerts:
+            market_id = str(row.get("market_id") or "")
+            if market_id and market_id not in latest_alert:
+                latest_alert[market_id] = row
+
+        for market_id, alert in latest_alert.items():
+            by_id.setdefault(market_id, {"market_id": market_id})
+            by_id[market_id]["latest_alert"] = alert
+
+        return [MarketDetailResponse(**item) for item in sorted(by_id.values(), key=lambda x: str(x["market_id"]))]
+
+    def load_market(self, market_id: str) -> Optional[MarketDetailResponse]:
+        for market in self.load_markets():
+            if market.market_id == market_id:
+                return market
+        return None
+
+    def load_market_metrics(self, market_id: str) -> Optional[MarketMetricsResponse]:
+        all_rows = _read_records(self.scoreboard_path)
+        windows = [row for row in all_rows if str(row.get("market_id")) == market_id]
+        if not windows:
+            return None
+
+        alerts, _ = self.load_alerts(since=None, limit=1000, offset=0)
+        market_alerts = [a for a in alerts if str(a.get("market_id")) == market_id]
+        severity_counts: Dict[str, int] = {}
+        for row in market_alerts:
+            sev = str(row.get("severity") or "UNKNOWN").upper()
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+        return MarketMetricsResponse(
+            market_id=market_id,
+            scoreboard_by_window=windows,
+            alert_total=len(market_alerts),
+            alert_severity_counts=severity_counts,
+        )
 
     def load_postmortem(self, *, market_id: str) -> Tuple[str, Path]:
         dated_candidates: List[Tuple[datetime, Path]] = []

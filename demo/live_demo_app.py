@@ -41,6 +41,9 @@ I18N = {
         "market_source_sample": "Using local live sample markets.",
         "market_source_api": "Using API market list.",
         "market_meta_sample_fallback": "Live API detail not found (404). Showing sample metadata.",
+        "top_n_markets": "Top N markets",
+        "top_markets_title": "Top markets",
+        "top_markets_help": "Top list by latest YES price.",
     },
     "kr": {
         "app_title": "📊 마켓 캘리브레이션 LIVE 데모 v2",
@@ -65,6 +68,9 @@ I18N = {
         "market_source_sample": "로컬 live 샘플 마켓 목록을 사용 중입니다.",
         "market_source_api": "API 마켓 목록을 사용 중입니다.",
         "market_meta_sample_fallback": "Live API 상세(404)를 찾지 못해 샘플 메타데이터를 표시합니다.",
+        "top_n_markets": "상위 N개 마켓",
+        "top_markets_title": "상위 마켓",
+        "top_markets_help": "최신 YES 가격 기준 상위 목록입니다.",
     },
 }
 
@@ -152,6 +158,51 @@ def market_label(item: dict[str, Any]) -> str:
     return f"{item.get('market_id')} | {prompt}"
 
 
+def _coerce_float(val: Any) -> float | None:
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    return f if not math.isnan(f) else None
+
+
+def latest_yes_price(item: dict[str, Any]) -> float | None:
+    y = item.get("y")
+    if isinstance(y, list) and y:
+        last = _coerce_float(y[-1])
+        if last is not None and 0 <= last <= 1:
+            return last
+    for key in ("latest_yes_price", "yes_price", "last_yes_price", "last_price", "price"):
+        price = _coerce_float(item.get(key))
+        if price is not None:
+            return price
+    return None
+
+
+def market_as_of(item: dict[str, Any]) -> Any:
+    for key in ("as_of_ts", "updated_at", "as_of", "timestamp"):
+        if item.get(key) is not None:
+            return item.get(key)
+    return "-"
+
+
+def build_top_markets_df(items: list[dict[str, Any]], top_n: int) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        rows.append(
+            {
+                "market_id": str(item.get("market_id") or "-"),
+                "question/title": item.get("question") or item.get("title") or "-",
+                "latest_yes_price": latest_yes_price(item),
+                "as_of_ts": market_as_of(item),
+            }
+        )
+    if not rows:
+        return pd.DataFrame(columns=["market_id", "question/title", "latest_yes_price", "as_of_ts"])
+    df = pd.DataFrame(rows)
+    return df.sort_values(by="latest_yes_price", ascending=False, na_position="last").head(top_n).reset_index(drop=True)
+
+
 def parse_series(series_text: str) -> list[float]:
     vals = [float(v.strip()) for v in series_text.split(",") if v.strip()]
     if not vals or any(math.isnan(v) or v < 0 or v > 1 for v in vals):
@@ -191,8 +242,35 @@ def info_toggle(key: str, text: str) -> None:
 
 
 if pages[page] == "overview":
+    sample_items = load_sample_markets()
+    top_n = st.sidebar.slider(T["top_n_markets"], min_value=3, max_value=20, value=10, step=1)
+
+    market_items: list[dict[str, Any]] = []
+    using_sample = bool(sample_items)
+    mk_err = None
+
+    if using_sample:
+        market_items = sample_items
+        st.caption(T["market_source_sample"])
+    else:
+        markets, mk_err = safe_get("/markets")
+        market_items = [m for m in (markets or {}).get("items", []) if m.get("market_id")]
+        st.caption(T["market_source_api"])
+
     scoreboard, sc_err = safe_get("/scoreboard?window=90d")
     alerts, al_err = safe_get("/alerts?limit=50")
+
+    if mk_err:
+        st.error(T["safe_api_error"])
+        st.caption(f"markets={mk_err}")
+
+    top_df = build_top_markets_df(market_items, top_n)
+    st.write(f"### {T['top_markets_title']} ({len(top_df)})")
+    st.caption(T["top_markets_help"])
+    if top_df.empty:
+        st.caption("No markets available.")
+    else:
+        st.dataframe(top_df, use_container_width=True, hide_index=True)
 
     if sc_err or al_err:
         st.error(T["safe_api_error"])

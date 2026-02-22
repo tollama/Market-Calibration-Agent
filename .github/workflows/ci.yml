@@ -23,6 +23,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          if ! command -v uv >/dev/null 2>&1; then
+            python -m pip install uv
+          fi
+          uv pip sync --frozen requirements.lock
           pip install -e ".[dev]"
 
       - name: Run unit tests
@@ -50,6 +54,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          if ! command -v uv >/dev/null 2>&1; then
+            python -m pip install uv
+          fi
+          uv pip sync --frozen requirements.lock
           pip install -e ".[dev]"
 
       - name: Run PRD2 one-command gate
@@ -90,6 +98,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          if ! command -v uv >/dev/null 2>&1; then
+            python -m pip install uv
+          fi
+          uv pip sync --frozen requirements.lock
           pip install -e ".[dev]"
 
       - name: Run live tollama integration tests

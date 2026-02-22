@@ -37,5 +37,4 @@ api:
   tsfm_forecast:
     require_auth: true
     token_env_var: TSFM_FORECAST_API_TOKEN
-    default_token: tsfm-dev-token
     rate_limit_per_minute: 6

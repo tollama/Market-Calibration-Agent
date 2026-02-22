@@ -23,17 +23,59 @@ class _FakeService:
         }
 
 
-def test_p2_11_tsfm_forecast_requires_inbound_auth_token(monkeypatch) -> None:
-    """Traceability: PRD2 P2-11 (inbound auth control for /tsfm/forecast)."""
-    monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
-    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard())
-    client = TestClient(app)
 
+def _forecast_payload() -> dict[str, object]:
     payload = fixture_request("D1_normal")
     payload["x_past"] = {}
     payload["x_future"] = {}
+    return payload
 
-    response = client.post("/tsfm/forecast", json=payload)
 
-    # Expected contract per gap matrix: unauthorized without inbound credentials.
+def test_p2_11_tsfm_forecast_requires_inbound_auth_token(monkeypatch) -> None:
+    """Traceability: PRD2 P2-11 (inbound auth control for /tsfm/forecast)."""
+    monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
+    monkeypatch.setenv("TSFM_FORECAST_API_TOKEN", "secret")
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard())
+    client = TestClient(app)
+
+    response = client.post("/tsfm/forecast", json=_forecast_payload())
+    assert response.status_code == 401
+
+    wrong = client.post(
+        "/tsfm/forecast",
+        json=_forecast_payload(),
+        headers={"Authorization": "Bearer wrong"},
+    )
+    assert wrong.status_code == 401
+
+
+def test_p2_11_tsfm_forecast_accepts_valid_inbound_token(monkeypatch) -> None:
+    """Traceability: PRD2 P2-11 (inbound auth success path)."""
+    monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
+    monkeypatch.setenv("TSFM_FORECAST_API_TOKEN", "secret")
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard())
+    client = TestClient(app)
+
+    response = client.post(
+        "/tsfm/forecast",
+        json=_forecast_payload(),
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_p2_11_tsfm_forecast_rejects_auth_when_env_missing(monkeypatch) -> None:
+    """Traceability: PRD2 P2-11 (environment token is required when auth is enabled)."""
+    monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
+    monkeypatch.delenv("TSFM_FORECAST_API_TOKEN", raising=False)
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard())
+    client = TestClient(app)
+
+    response = client.post(
+        "/tsfm/forecast",
+        json=_forecast_payload(),
+        headers={"Authorization": "Bearer secret"},
+    )
+
     assert response.status_code == 401

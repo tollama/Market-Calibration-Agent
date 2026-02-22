@@ -8,6 +8,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any, Deque, Mapping, Optional
 
+import hmac
 import os
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -37,12 +38,10 @@ class _TSFMInboundGuard:
         *,
         require_auth: bool = True,
         token_env_var: str = "TSFM_FORECAST_API_TOKEN",
-        default_token: str = "tsfm-dev-token",
         rate_limit_per_minute: int = 6,
     ) -> None:
         self.require_auth = require_auth
         self.token_env_var = token_env_var
-        self.default_token = default_token
         self.rate_limit_per_minute = rate_limit_per_minute
         self._calls: dict[str, Deque[float]] = defaultdict(deque)
 
@@ -56,7 +55,6 @@ class _TSFMInboundGuard:
         return cls(
             require_auth=bool(tsfm_cfg.get("require_auth", True)),
             token_env_var=str(tsfm_cfg.get("token_env_var", "TSFM_FORECAST_API_TOKEN")),
-            default_token=str(tsfm_cfg.get("default_token", "tsfm-dev-token")),
             rate_limit_per_minute=int(tsfm_cfg.get("rate_limit_per_minute", 6)),
         )
 
@@ -77,7 +75,24 @@ class _TSFMInboundGuard:
 
     def enforce(self, request: Request) -> None:
         presented_token = self._extract_presented_token(request)
-        expected_token = os.getenv(self.token_env_var) or self.default_token
+        expected_token = os.getenv(self.token_env_var)
+
+        if self.require_auth:
+            if not expected_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Unauthorized",
+                )
+            if not presented_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Unauthorized",
+                )
+            if not hmac.compare_digest(presented_token.encode(), expected_token.encode()):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Unauthorized",
+                )
 
         rpm = int(self.rate_limit_per_minute)
         if rpm > 0:
@@ -96,12 +111,6 @@ class _TSFMInboundGuard:
                     headers={"Retry-After": str(retry_after)},
                 )
             window.append(now)
-
-        if self.require_auth and presented_token != expected_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Unauthorized",
-            )
 
 
 app = FastAPI(title="Market Calibration Read-Only API", version="0.1.0")

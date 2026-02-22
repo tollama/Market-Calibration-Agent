@@ -63,3 +63,78 @@ def test_run_daily_job_continue_on_stage_failure_with_checkpoint(monkeypatch, tm
     assert checkpoint_payload["stages"]["normalize"]["status"] == "failed"
     assert checkpoint_payload["stages"]["normalize"]["output"]["retry_count"] == 2
     assert checkpoint_payload["stages"]["publish"]["status"] == "success"
+
+
+def test_run_daily_job_treats_explicit_failed_stage_output_as_hard_stop(monkeypatch) -> None:
+    attempts = {"ingest": 0}
+
+    def failing_ingest(context):
+        attempts["ingest"] += 1
+        context.state["market_ids"] = ["m1"]
+        return {
+            "stage": "ingest",
+            "status": "failed",
+            "reason": "malformed ingest payload",
+            "failure": {
+                "source": "stage",
+                "message": "malformed ingest payload",
+            },
+        }
+
+    monkeypatch.setattr(daily_job, "_stage_ingest", failing_ingest)
+
+    result = daily_job.run_daily_job(run_id="daily-explicit-fail-stop")
+
+    ingest_stage = next(stage for stage in result["stages"] if stage["name"] == "ingest")
+
+    assert attempts["ingest"] == 1
+    assert result["success"] is False
+    assert result["stage_order"] == ["discover", "ingest"]
+    assert ingest_stage["status"] == "failed"
+    assert ingest_stage["output"].get("status") == "failed"
+    assert ingest_stage["output"].get("reason") == "malformed ingest payload"
+    assert ingest_stage["output"].get("stopped") is True
+    assert ingest_stage["output"].get("stop_condition") == "continue_on_stage_failure=false"
+
+
+def test_run_daily_job_uses_recovery_policy_with_continuable_explicit_stage_failure(monkeypatch) -> None:
+    attempts = {"features": 0}
+
+    def failing_features(context):
+        attempts["features"] += 1
+        return {
+            "stage": "features",
+            "status": "failed",
+            "reason": "optional feature sink unavailable",
+            "failure": {
+                "source": "stage",
+                "message": "optional feature sink unavailable",
+            },
+        }
+
+    def publish_hook(context):
+        context.state["published_records"] = [{"market_id": "m1"}]
+        return {"hook": "publish"}
+
+    def seeded_discover(context):
+        context.state["market_ids"] = ["m1", "m2"]
+        return {"market_count": 2}
+
+    monkeypatch.setattr(daily_job, "_stage_discover", seeded_discover)
+    monkeypatch.setattr(daily_job, "_stage_features", failing_features)
+    monkeypatch.setattr(daily_job, "_stage_publish", publish_hook)
+
+    result = daily_job.run_daily_job(
+        run_id="daily-explicit-fail-continue",
+        continue_on_stage_failure=True,
+    )
+
+    features_stage = next(stage for stage in result["stages"] if stage["name"] == "features")
+    publish_stage = next(stage for stage in result["stages"] if stage["name"] == "publish")
+
+    assert attempts["features"] == 1
+    assert result["success"] is False
+    assert result["stage_order"] == list(daily_job.DAILY_STAGE_NAMES)
+    assert features_stage["status"] == "failed"
+    assert publish_stage["status"] == "success"
+    assert publish_stage["output"].get("hook") == "publish"

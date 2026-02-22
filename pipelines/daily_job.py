@@ -116,15 +116,25 @@ def _infer_market_ids(rows: Any) -> list[str]:
     return _normalize_market_ids([row.get("market_id") for row in _rows_to_dicts(rows)])
 
 
+def _fallback_stage_output(stage: str, reason: str, **fields: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "stage": stage,
+        "status": "no-op",
+        "reason": reason,
+    }
+    payload.update(fields)
+    return payload
+
+
 def _fallback_stage_build_features(context: PipelineRunContext) -> dict[str, Any]:
     feature_rows = context.state.setdefault("feature_rows", [])
     market_count = _count_items(_as_list(context.state.get("market_ids")))
-    return {
-        "stage": "features",
-        "status": "no-op",
-        "market_count": market_count,
-        "feature_count": _count_items(feature_rows),
-    }
+    return _fallback_stage_output(
+        "features",
+        "build_feature_frame stage is unavailable in runtime",
+        market_count=market_count,
+        feature_count=_count_items(feature_rows),
+    )
 
 
 try:
@@ -635,6 +645,93 @@ def _checkpoint_stage_lookup(path: str | None, resume_from_checkpoint: bool) -> 
     return stages
 
 
+def _normalize_stage_status(value: Any) -> str:
+    if not isinstance(value, str):
+        return "success"
+
+    normalized = value.strip().lower()
+    if normalized in {"failed", "failure", "error"}:
+        return "failed"
+    if normalized in {"no-op", "no_op", "noop", "skipped", "degraded", "fallback"}:
+        return "no-op"
+    if normalized in {"success", "ok", "passed", "complete", "completed"}:
+        return "success"
+    return "success"
+
+
+def _normalize_stage_output(
+    stage_name: str,
+    raw_output: Any,
+    *,
+    attempt: int,
+) -> tuple[dict[str, Any], bool]:
+    if not isinstance(raw_output, Mapping):
+        return _build_stage_failure_output(
+            stage_name,
+            "stage output must be a mapping",
+            attempt=attempt,
+        ), True
+
+    output: dict[str, Any] = dict(raw_output)
+    output.setdefault("stage", stage_name)
+    output.setdefault("status", "success")
+    output["status"] = _normalize_stage_status(output["status"])
+
+    if attempt > 0:
+        output["retry_count"] = attempt
+
+    if output["status"] == "failed":
+        output.setdefault("reason", "stage reported failure")
+        output.setdefault(
+            "failure",
+            {
+                "source": "stage",
+                "message": str(output.get("reason")),
+            },
+        )
+        return output, True
+
+    if output["status"] == "no-op":
+        output.setdefault(
+            "failure",
+            {
+                "source": "pipeline",
+                "message": output.get("reason", "optional pipeline component unavailable"),
+            },
+        )
+    return output, False
+
+
+def _build_stage_failure_output(
+    stage_name: str,
+    message: str,
+    *,
+    attempt: int,
+    exc: BaseException | None = None,
+) -> dict[str, Any]:
+    failure: dict[str, Any] = {
+        "source": "pipeline",
+        "message": message,
+    }
+    if exc is not None:
+        failure.update(
+            {
+                "type": exc.__class__.__name__,
+                "error": str(exc),
+            }
+        )
+
+    output: dict[str, Any] = {
+        "stage": stage_name,
+        "status": "failed",
+        "reason": message,
+        "failure": failure,
+    }
+    if attempt > 0:
+        output["retry_count"] = attempt
+    return output
+
+
 def _run_daily_stages(
     *,
     context: PipelineRunContext,
@@ -668,25 +765,38 @@ def _run_daily_stages(
         stage_result: StageResult | None = None
         for attempt in range(retry_limit + 1):
             try:
-                output = stage.handler(context)
-                if attempt > 0:
-                    if isinstance(output, Mapping):
-                        output = dict(output)
-                    else:
-                        output = {}
-                    output["retry_count"] = attempt
-                stage_result = StageResult(name=stage.name, status="success", output=output)
+                output, failed = _normalize_stage_output(
+                    stage.name,
+                    stage.handler(context),
+                    attempt=attempt,
+                )
+                if failed:
+                    stage_result = StageResult(
+                        name=stage.name,
+                        status="failed",
+                        output=output,
+                        error=str(output.get("failure", {}).get("message")),
+                    )
+                else:
+                    stage_result = StageResult(
+                        name=stage.name,
+                        status="success",
+                        output=output,
+                    )
                 break
             except Exception as exc:  # pragma: no cover - defensive skeleton behavior
                 if attempt < retry_limit:
                     continue
-                failed_output: dict[str, Any] = {}
-                if attempt > 0:
-                    failed_output["retry_count"] = attempt
+                output = _build_stage_failure_output(
+                    stage.name,
+                    "stage handler raised an exception",
+                    attempt=attempt,
+                    exc=exc,
+                )
                 stage_result = StageResult(
                     name=stage.name,
                     status="failed",
-                    output=failed_output,
+                    output=output,
                     error=str(exc),
                 )
                 break
@@ -695,9 +805,17 @@ def _run_daily_stages(
             stage_result = StageResult(
                 name=stage.name,
                 status="failed",
-                output={},
+                output=_build_stage_failure_output(
+                    stage.name,
+                    "stage execution did not produce a result",
+                    attempt=0,
+                ),
                 error="stage execution did not produce a result",
             )
+
+        if stage_result.status == "failed" and not continue_on_stage_failure:
+            stage_result.output.setdefault("stopped", True)
+            stage_result.output.setdefault("stop_condition", "continue_on_stage_failure=false")
 
         stage_results.append(stage_result)
         if checkpoint_path is not None:
@@ -753,20 +871,26 @@ def run_daily_job(
         stage_retry_limit=stage_retry_limit,
         continue_on_stage_failure=continue_on_stage_failure,
     )
+    stage_payloads = [
+        {
+            "name": stage.name,
+            "status": stage.status,
+            "output": stage.output,
+            "error": stage.error,
+        }
+        for stage in result.stages
+    ]
+    stopped_early = not result.success and len(result.stages) < len(DAILY_STAGE_NAMES)
     payload = {
         "run_id": result.run_id,
         "success": result.success,
         "stage_order": [stage.name for stage in result.stages],
-        "stages": [
-            {
-                "name": stage.name,
-                "status": stage.status,
-                "output": stage.output,
-                "error": stage.error,
-            }
-            for stage in result.stages
-        ],
+        "stages": stage_payloads,
     }
+    if stopped_early:
+        payload["stopped_early"] = True
+        payload["stop_condition"] = "continue_on_stage_failure=false"
+        payload["stopped_on_stage"] = stage_payloads[-1]["name"]
     if checkpoint_path is not None:
         payload["checkpoint_path"] = checkpoint_path
     if resume_from_checkpoint:

@@ -18,6 +18,16 @@ Bootstrap repository for calibrating market probabilities from streaming and his
 
 ## Quick Start
 
+## Performance Improvements
+
+We recently conducted a profiling session on the core entry points (`api/app.py` and `runners/tsfm_service.py`). The resulting flamegraphs (`fastapi.svg`, `tsfm.svg`) highlight CPU‑intensive functions and I/O bottlenecks. These insights guided targeted refactors such as:
+
+- Introducing async I/O for blocking network and file operations.
+- Caching repetitive computations with `functools.lru_cache`.
+- Switching to generators for large JSONL streams to reduce memory churn.
+
+Please refer to the profiling artifacts in the repository for detailed analysis.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate

@@ -11,6 +11,8 @@
 ## Quick Start
 ```bash
 cd /Users/ychoi/Documents/GitHub/Market-Calibration-Agent
+# runtime deps are installed from pyproject extras
+pip install -e .[server,demo]
 ./scripts/run_live_demo.sh
 ```
 

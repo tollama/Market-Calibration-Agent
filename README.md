@@ -22,6 +22,9 @@ Bootstrap repository for calibrating market probabilities from streaming and his
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
+
+# For the live demo runtime (API + Streamlit UI):
+pip install -e .[server,demo]
 ```
 
 ## Run
@@ -34,8 +37,13 @@ python -c "from pathlib import Path; import yaml; [yaml.safe_load(p.read_text())
 ## Test
 
 ```bash
+pip install -e .[test]
 pytest
 ```
+
+## Dependency locking (optional)
+
+See [dependency lockfile strategy](docs/dependency-lockfile-strategy.md).
 
 ## Config Files
 

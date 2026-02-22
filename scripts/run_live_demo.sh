@@ -103,8 +103,8 @@ if port_in_use "$GUI_PORT"; then
   warn "Port $GUI_PORT is already in use. Streamlit startup may fail."
 fi
 
-say "Ensuring runtime dependencies are available"
-"$PYTHON_BIN" -m pip install -q fastapi pydantic pandas numpy pyarrow httpx websockets pyyaml uvicorn streamlit
+say "Ensuring runtime dependencies are available from package extras"
+"$PYTHON_BIN" -m pip install -q -e .[server,demo]
 
 say "Starting API on http://${API_HOST}:${API_PORT}"
 "$PYTHON_BIN" -m uvicorn api.app:app --host "$API_HOST" --port "$API_PORT" &

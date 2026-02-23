@@ -79,3 +79,19 @@ def test_p2_11_tsfm_forecast_rejects_auth_when_env_missing(monkeypatch) -> None:
     )
 
     assert response.status_code == 401
+
+
+def test_p2_11_tsfm_forecast_rejects_placeholder_token_in_env(monkeypatch) -> None:
+    """Traceability: PRD2 P2-11 (placeholder tokens are not accepted for auth)."""
+    monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
+    monkeypatch.setenv("TSFM_FORECAST_API_TOKEN", "tsfm-dev-token")
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard())
+    client = TestClient(app)
+
+    response = client.post(
+        "/tsfm/forecast",
+        json=_forecast_payload(),
+        headers={"Authorization": "Bearer tsfm-dev-token"},
+    )
+
+    assert response.status_code == 401

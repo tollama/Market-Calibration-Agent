@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from calibration.conformal import ConformalAdjustment
 from calibration.conformal_state import save_conformal_adjustment
 from runners.tollama_adapter import TollamaError
-from runners.tsfm_service import TSFMRunnerService, TSFMServiceConfig
+from runners.tsfm_service import (
+    TSFMRunnerService,
+    TSFMServiceConfig,
+    TSFMServiceInputError,
+)
 
 
 class _FakeAdapter:
@@ -62,6 +68,118 @@ def test_tsfm_service_handles_none_liquidity_bucket_without_crashing() -> None:
     assert response["meta"]["runtime"] == "tollama"
     assert response["meta"]["fallback_used"] is False
     assert set(response["yhat_q"]) == {"0.1", "0.5", "0.9"}
+
+
+def test_tsfm_service_rejects_empty_series_as_input_error() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+
+    with pytest.raises(TSFMServiceInputError) as exc:
+        service.forecast({**_request(), "y": []})
+
+    assert "too_few_points" in str(exc.value)
+
+
+def test_tsfm_service_rejects_singleton_series_as_input_error() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+
+    with pytest.raises(TSFMServiceInputError) as exc:
+        service.forecast({**_request(), "y": [0.42]})
+
+    assert "too_few_points" in str(exc.value)
+
+
+def test_tsfm_service_short_series_uses_baseline_without_exception() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+
+    response = service.forecast({**_request(), "y": [0.12, 0.34]})
+
+    assert response["meta"]["runtime"] == "baseline"
+    assert response["meta"]["fallback_used"] is True
+    assert response["meta"]["fallback_reason"] == "too_few_points"
+    assert all(len(v) == _request()["horizon_steps"] for v in response["yhat_q"].values())
+
+
+def test_tsfm_service_rejects_invalid_frequency_as_input_error() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+
+    with pytest.raises(TSFMServiceInputError) as exc:
+        service.forecast({**_request(), "freq": ""})
+
+    assert "malformed input: freq" in str(exc.value)
+
+
+def test_tsfm_service_fallbacks_to_safe_output_when_baseline_configuration_broken() -> None:
+    service = TSFMRunnerService(
+        adapter=_FakeAdapter(),
+        config=TSFMServiceConfig(baseline_method="definitely-not-real"),
+    )
+    response = service.forecast({**_request(), "y": [0.12, 0.34]})
+
+    assert response["meta"]["runtime"] == "baseline"
+    assert response["meta"]["fallback_used"] is True
+    assert response["meta"]["fallback_reason"].startswith("baseline_error:")
+    assert response["yhat_q"]["0.1"][0] <= response["yhat_q"]["0.5"][0] <= response["yhat_q"]["0.9"][0]
+
+
+def test_tsfm_service_rejects_malformed_series_values() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+
+    with pytest.raises(TSFMServiceInputError) as exc:
+        service.forecast({**_request(), "y": ["bad", 0.5]})
+
+    assert "malformed input" in str(exc.value)
+
+
+def test_tsfm_service_rejects_oversized_series() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+
+    with pytest.raises(TSFMServiceInputError) as exc:
+        service.forecast({**_request(), "y": [0.5] * 20_001})
+
+    assert "too large" in str(exc.value)
+
+
+def test_tsfm_service_rejects_mismatched_y_ts_length() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+
+    with pytest.raises(TSFMServiceInputError) as exc:
+        service.forecast({**_request(), "y_ts": ["2026-02-20T00:00:00Z", "2026-02-20T00:05:00Z", "2026-02-20T00:10:00Z"]})
+
+    assert "y_ts length must match" in str(exc.value)
+
+
+def test_tsfm_service_rejects_non_increasing_timestamps() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+    base = datetime(2026, 2, 20, tzinfo=timezone.utc)
+    n = len(_request()["y"])
+    y_ts = [
+        (base + timedelta(minutes=5 * i)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        for i in range(n)
+    ]
+    y_ts[5], y_ts[6] = y_ts[6], y_ts[5]
+
+    with pytest.raises(TSFMServiceInputError) as exc:
+        service.forecast({**_request(), "y_ts": y_ts})
+
+    assert "strictly increasing" in str(exc.value)
+
+
+def test_tsfm_service_rejects_timestamp_spacing_not_matching_freq() -> None:
+    service = TSFMRunnerService(adapter=_FakeAdapter())
+    base = datetime(2026, 2, 20, tzinfo=timezone.utc)
+    n = len(_request()["y"])
+    y_ts = [
+        (base + timedelta(minutes=5 * i)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        for i in range(n)
+    ]
+    y_ts[11] = (base + timedelta(minutes=71)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    for i in range(12, n):
+        y_ts[i] = (base + timedelta(minutes=70 + 5 * (i - 11))).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    with pytest.raises(TSFMServiceInputError) as exc:
+        service.forecast({**_request(), "y_ts": y_ts})
+
+    assert "spacing must align with freq" in str(exc.value)
 
 
 def test_tsfm_service_falls_back_to_baseline_on_adapter_error() -> None:
@@ -169,14 +287,16 @@ def test_tsfm_service_reverts_to_default_quantiles_when_unsupported_requested() 
 
 def test_tsfm_service_fast_gate_max_gap_before_tollama() -> None:
     service = TSFMRunnerService(adapter=_FakeAdapter())
-    req = {
-        **_request(),
-        "y_ts": [
-            "2026-02-20T00:00:00Z",
-            "2026-02-20T00:05:00Z",
-            "2026-02-20T03:00:00Z",
-        ],
-    }
+    base = datetime(2026, 2, 20, tzinfo=timezone.utc)
+    regular = [
+        (base + timedelta(minutes=5 * i)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        for i in range(len(_request()["y"]))
+    ]
+    regular[10] = (base + timedelta(hours=3)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    for idx in range(11, len(regular)):
+        regular[idx] = (base + timedelta(hours=3, minutes=5 * (idx - 10))).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    req = {**_request(), "y_ts": regular}
 
     response = service.forecast(req)
 

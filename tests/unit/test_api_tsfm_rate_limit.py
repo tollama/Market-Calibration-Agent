@@ -26,7 +26,7 @@ class _FakeService:
 def test_p2_11_tsfm_forecast_enforces_rate_limit_with_retry_after(monkeypatch) -> None:
     """Traceability: PRD2 P2-11 (inbound rate-limit + Retry-After semantics)."""
     monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
-    monkeypatch.setenv("TSFM_FORECAST_API_TOKEN", "tsfm-dev-token")
+    monkeypatch.setenv("TSFM_FORECAST_API_TOKEN", "secret")
     monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard())
     client = TestClient(app)
 
@@ -39,7 +39,7 @@ def test_p2_11_tsfm_forecast_enforces_rate_limit_with_retry_after(monkeypatch) -
         client.post(
             "/tsfm/forecast",
             json=payload,
-            headers={"Authorization": "Bearer tsfm-dev-token"},
+            headers={"Authorization": "Bearer secret"},
         )
         for _ in range(8)
     ]

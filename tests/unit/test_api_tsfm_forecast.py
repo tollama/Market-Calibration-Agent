@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 import importlib
 
 from api.app import app
+from runners.tsfm_service import TSFMRunnerService
 from tests.helpers.prd2_fixtures import fixture_request
 
 app_module = importlib.import_module("api.app")
@@ -26,6 +27,11 @@ class _FakeService:
         return "# TYPE tsfm_request_total counter\ntsfm_request_total 1\n"
 
 
+class _FakeAdapter:
+    def forecast(self, **_: object):
+        return {"0.1": [0.1, 0.2], "0.5": [0.3, 0.4], "0.9": [0.6, 0.7]}, {"runtime": "tollama", "latency_ms": 1.0}
+
+
 def test_post_tsfm_forecast_contract(monkeypatch) -> None:
     monkeypatch.setattr(app_module, "_tsfm_service", _FakeService())
     monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard(require_auth=False, rate_limit_per_minute=120))
@@ -41,6 +47,54 @@ def test_post_tsfm_forecast_contract(monkeypatch) -> None:
     body = response.json()
     assert body["market_id"] == "prd2-d1-normal"
     assert set(body["yhat_q"]) == {"0.1", "0.5", "0.9"}
+
+
+def test_post_tsfm_forecast_rejects_too_short_series_as_bad_request(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "_tsfm_service", TSFMRunnerService(adapter=_FakeAdapter()))
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard(require_auth=False, rate_limit_per_minute=120))
+    client = TestClient(app)
+
+    payload = fixture_request("D1_normal")
+    payload["x_past"] = {}
+    payload["x_future"] = {}
+    payload["y"] = [0.5]
+
+    response = client.post("/tsfm/forecast", json=payload)
+
+    assert response.status_code == 400
+    assert "too_few_points" in response.json().get("detail", "")
+
+
+def test_post_tsfm_forecast_rejects_invalid_freq_as_bad_request(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "_tsfm_service", TSFMRunnerService(adapter=_FakeAdapter()))
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard(require_auth=False, rate_limit_per_minute=120))
+    client = TestClient(app)
+
+    payload = fixture_request("D1_normal")
+    payload["x_past"] = {}
+    payload["x_future"] = {}
+    payload["freq"] = "bad"
+
+    response = client.post("/tsfm/forecast", json=payload)
+
+    assert response.status_code == 400
+    assert "malformed input" in response.json().get("detail", "")
+
+
+def test_post_tsfm_forecast_rejects_mismatched_y_and_y_ts_lengths(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "_tsfm_service", TSFMRunnerService(adapter=_FakeAdapter()))
+    monkeypatch.setattr(app_module, "_tsfm_guard", app_module._TSFMInboundGuard(require_auth=False, rate_limit_per_minute=120))
+    client = TestClient(app)
+
+    payload = fixture_request("D1_normal")
+    payload["x_past"] = {}
+    payload["x_future"] = {}
+    payload["y_ts"] = ["2026-02-20T00:00:00Z", "2026-02-20T00:05:00Z", "2026-02-20T00:10:00Z"]
+
+    response = client.post("/tsfm/forecast", json=payload)
+
+    assert response.status_code == 400
+    assert "y_ts" in response.json().get("detail", "").lower()
 
 
 def test_post_tsfm_forecast_accepts_gap_metadata_fields(monkeypatch) -> None:

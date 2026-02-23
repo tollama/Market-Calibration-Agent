@@ -2,12 +2,49 @@ from __future__ import annotations
 
 import json
 
-from api.dependencies import LocalDerivedStore
+from api.dependencies import LocalDerivedStore, _record_read_metrics, _read_records
 
 
 def _write_json(path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _reset_record_metrics() -> None:
+    _record_read_metrics.clear()
+
+
+def test_read_records_skips_malformed_json_lines(tmp_path, caplog) -> None:
+    _reset_record_metrics()
+    path = tmp_path / "scoreboard.json"
+    path.write_text(
+        '{"market_id": "good", "window": "90d"}\n{"market_id": "bad"\n{"market_id": "also_good"}\n',
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        rows = _read_records(path)
+
+    assert rows == [
+        {"market_id": "good", "window": "90d"},
+        {"market_id": "also_good"},
+    ]
+    assert any("Skipping malformed JSON" in record.message for record in caplog.records)
+    assert _record_read_metrics["malformed_lines"] == 1
+
+
+def test_read_records_skips_empty_lines(tmp_path) -> None:
+    _reset_record_metrics()
+    path = tmp_path / "scoreboard.json"
+    path.write_text('\n\n{"market_id": "a", "window": "90d"}\n   \n{}\n', encoding="utf-8")
+
+    rows = _read_records(path)
+
+    assert rows == [
+        {"market_id": "a", "window": "90d"},
+        {},
+    ]
+    assert _record_read_metrics["empty_lines"] == 3
 
 
 def test_load_scoreboard_prefers_direct_file_over_partitions(tmp_path) -> None:
@@ -28,7 +65,7 @@ def test_load_scoreboard_prefers_direct_file_over_partitions(tmp_path) -> None:
             {
                 "market_id": "partition",
                 "window": "90d",
-                "as_of": "2026-02-21T00:00:00Z",
+                "as_of": "2026-02-20T10:00:00Z",
             }
         ],
     )

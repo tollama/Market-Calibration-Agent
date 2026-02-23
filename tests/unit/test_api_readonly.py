@@ -101,6 +101,17 @@ def test_scoreboard_filters_window_and_tag(monkeypatch, tmp_path):
     assert payload["items"][0]["market_id"] == "mkt-90"
 
 
+def test_scoreboard_rejects_invalid_window(monkeypatch, tmp_path):
+    _write_fixture_files(tmp_path)
+    monkeypatch.setenv("DERIVED_DIR", str(tmp_path / "derived"))
+
+    client = TestClient(app)
+    response = client.get("/scoreboard", params={"window": "0"})
+
+    assert response.status_code == 422
+    assert "window" in response.text.lower()
+
+
 def test_alerts_since_and_pagination(monkeypatch, tmp_path):
     _write_fixture_files(tmp_path)
     monkeypatch.setenv("DERIVED_DIR", str(tmp_path / "derived"))

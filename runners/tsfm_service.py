@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from threading import RLock
 from typing import Any, Mapping
 
 import yaml
@@ -22,13 +23,19 @@ from runners.tsfm_observability import TSFMMetricsEmitter
 
 logger = logging.getLogger(__name__)
 
+_MAX_SERIES_LEN = 20_000
+
 
 def _parse_freq_to_seconds(freq: str) -> int:
-    text = freq.strip().lower()
+    text = str(freq).strip().lower()
+    if not text:
+        raise ValueError(f"Unsupported freq: {freq}")
     if text.endswith("m"):
-        return int(text[:-1]) * 60
+        step = int(text[:-1])
+        return max(step, 0) * 60
     if text.endswith("h"):
-        return int(text[:-1]) * 3600
+        step = int(text[:-1])
+        return max(step, 0) * 3600
     raise ValueError(f"Unsupported freq: {freq}")
 
 
@@ -83,6 +90,10 @@ def _validate_quantile_payload(
             )
         if any(not math.isfinite(v) for v in path):
             raise ValueError(f"non_finite_value:q={q}")
+
+
+class TSFMServiceInputError(ValueError):
+    """Raised when request payload is syntactically invalid."""
 
 
 class DegradationState(str, Enum):
@@ -158,6 +169,7 @@ class TSFMRunnerService:
                 self.conformal_adjustment = None
                 self._conformal_loaded_from_state = False
         self.metrics_emitter = metrics_emitter or TSFMMetricsEmitter()
+        self._state_lock = RLock()
         self._cache: dict[str, tuple[float, float, dict[str, Any]]] = {}
         self._breaker_state = CircuitState.CLOSED
         self._breaker_open_until = 0.0
@@ -251,6 +263,63 @@ class TSFMRunnerService:
             adapter = TollamaAdapter(adapter_config)
         return cls(adapter=adapter, config=config, conformal_adjustment=conformal_adjustment)
 
+    def _normalize_forecast_request(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        request_data = dict(request)
+        if "y" in request_data:
+            request_data["y"] = list(request_data["y"])
+        if "y_ts" in request_data and request_data["y_ts"] is not None:
+            request_data["y_ts"] = list(request_data["y_ts"])
+        if "quantiles" in request_data:
+            request_data["quantiles"] = list(request_data["quantiles"])
+        if isinstance(request_data.get("x_past"), dict):
+            request_data["x_past"] = dict(request_data["x_past"])
+        if isinstance(request_data.get("x_future"), dict):
+            request_data["x_future"] = dict(request_data["x_future"])
+        if isinstance(request_data.get("transform"), Mapping):
+            request_data["transform"] = dict(request_data["transform"])
+        if isinstance(request_data.get("model"), Mapping):
+            request_data["model"] = dict(request_data["model"])
+        return request_data
+
+    def _validate_forecast_request(self, request: Mapping[str, Any]) -> None:
+        y_raw = request.get("y", [])
+        if not isinstance(y_raw, list):
+            raise TSFMServiceInputError("malformed input: y must be a list")
+        if len(y_raw) == 0:
+            raise TSFMServiceInputError("too_few_points: at least 2 finite y values required")
+        if len(y_raw) > _MAX_SERIES_LEN:
+            raise TSFMServiceInputError(f"malformed input: y too large (max {_MAX_SERIES_LEN})")
+
+        y_values: list[float] = []
+        for idx, item in enumerate(y_raw):
+            try:
+                value = float(item)
+            except (TypeError, ValueError) as exc:
+                raise TSFMServiceInputError(f"malformed input: y[{idx}] is not numeric") from exc
+            if not math.isfinite(value):
+                raise TSFMServiceInputError(f"malformed input: y[{idx}] is non-finite")
+            y_values.append(value)
+
+        if len(y_values) < 2:
+            raise TSFMServiceInputError("too_few_points: at least 2 finite y values required")
+
+        try:
+            _parse_freq_to_seconds(str(request.get("freq") or self.config.default_freq))
+        except ValueError as exc:
+            raise TSFMServiceInputError(f"malformed input: {exc}") from exc
+
+        if request.get("horizon_steps") is not None:
+            horizon_steps = int(request["horizon_steps"])
+            if horizon_steps <= 0:
+                raise TSFMServiceInputError("malformed input: horizon_steps must be >= 1")
+
+        y_ts = request.get("y_ts")
+        if y_ts is not None:
+            if not isinstance(y_ts, list):
+                raise TSFMServiceInputError("malformed input: y_ts must be a list")
+            if len(y_ts) != len(y_values):
+                raise TSFMServiceInputError("malformed input: y_ts length must match y")
+
     def _cache_key(self, request: Mapping[str, Any]) -> str:
         stable = {
             "market_id": request.get("market_id"),
@@ -269,30 +338,32 @@ class TSFMRunnerService:
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _read_cache(self, key: str, *, allow_stale: bool = False) -> tuple[dict[str, Any], bool] | None:
-        row = self._cache.get(key)
-        if row is None:
+        with self._state_lock:
+            row = self._cache.get(key)
+            if row is None:
+                return None
+            expires_at, stale_until, value = row
+            now = time.time()
+            if now <= expires_at:
+                return dict(value), False
+            if now <= stale_until:
+                if allow_stale:
+                    return dict(value), True
+                return None
+            self._cache.pop(key, None)
             return None
-        expires_at, stale_until, value = row
-        now = time.time()
-        if now <= expires_at:
-            return dict(value), False
-        if now <= stale_until:
-            if allow_stale:
-                return dict(value), True
-            return None
-        self._cache.pop(key, None)
-        return None
 
     def _write_cache(self, key: str, value: dict[str, Any]) -> None:
-        now = time.time()
-        max_entries = max(int(self.config.cache_max_entries), 1)
-        if len(self._cache) >= max_entries:
-            self._cache.pop(next(iter(self._cache)))
-        self._cache[key] = (
-            now + self.config.cache_ttl_s,
-            now + self.config.cache_ttl_s + self.config.cache_stale_if_error_s,
-            dict(value),
-        )
+        with self._state_lock:
+            now = time.time()
+            max_entries = max(int(self.config.cache_max_entries), 1)
+            if len(self._cache) >= max_entries:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[key] = (
+                now + self.config.cache_ttl_s,
+                now + self.config.cache_ttl_s + self.config.cache_stale_if_error_s,
+                dict(value),
+            )
 
     def _extract_max_gap_minutes(self, request: Mapping[str, Any], *, freq_seconds: int) -> float | None:
         if isinstance(request.get("max_gap_minutes"), (int, float)):
@@ -321,10 +392,42 @@ class TSFMRunnerService:
         expected_step = max(freq_seconds, 1)
         return max_gap_s / 60.0 if max_gap_s > expected_step else 0.0
 
+    def _validate_input_consistency(
+        self,
+        *,
+        request: Mapping[str, Any],
+        y_length: int,
+        freq_seconds: int,
+    ) -> None:
+        ts_candidates = request.get("y_ts") or request.get("observed_ts")
+        if ts_candidates is None:
+            return
+        if not isinstance(ts_candidates, list):
+            raise TSFMServiceInputError("malformed input: y_ts must be a list")
+        if len(ts_candidates) != y_length:
+            raise TSFMServiceInputError("y_ts length must match y")
+
+        parsed: list[datetime] = []
+        for token in ts_candidates:
+            if not isinstance(token, str):
+                raise TSFMServiceInputError("malformed input: y_ts must contain isoformat datetimes")
+            try:
+                parsed.append(datetime.fromisoformat(token.replace("Z", "+00:00")))
+            except ValueError as exc:
+                raise TSFMServiceInputError("malformed input: y_ts must contain isoformat datetimes") from exc
+
+        for idx in range(1, len(parsed)):
+            gap_s = (parsed[idx] - parsed[idx - 1]).total_seconds()
+            if gap_s <= 0:
+                raise TSFMServiceInputError("malformed input: y_ts must be strictly increasing")
+            if gap_s % freq_seconds != 0:
+                raise TSFMServiceInputError("malformed input: y_ts spacing must align with freq")
+
     def _prune_events(self, *, now: float, window_s: int) -> None:
-        threshold = now - max(window_s, 1)
-        while self._events and self._events[0][0] < threshold:
-            self._events.popleft()
+        with self._state_lock:
+            threshold = now - max(window_s, 1)
+            while self._events and self._events[0][0] < threshold:
+                self._events.popleft()
 
     def _failure_rate(self, *, now: float, window_s: int, min_requests: int) -> float | None:
         self._prune_events(now=now, window_s=window_s)
@@ -334,95 +437,106 @@ class TSFMRunnerService:
         return failures / max(len(self._events), 1)
 
     def _record_outcome(self, *, now: float, success: bool) -> None:
-        self._events.append((now, success))
-        self._prune_events(now=now, window_s=max(self.config.circuit_breaker_window_s, self.config.degradation_window_s))
+        with self._state_lock:
+            self._events.append((now, success))
+            self._prune_events(now=now, window_s=max(self.config.circuit_breaker_window_s, self.config.degradation_window_s))
 
     def _update_degradation_state(self, *, now: float) -> None:
-        failure_rate = self._failure_rate(
-            now=now,
-            window_s=self.config.degradation_window_s,
-            min_requests=self.config.degradation_min_requests,
-        )
-        if failure_rate is None:
-            return
-
-        state = self._degradation_state
-        if state == DegradationState.NORMAL:
-            if failure_rate >= self.config.baseline_only_enter_failure_rate:
-                self._degradation_state = DegradationState.BASELINE_ONLY
-            elif failure_rate >= self.config.degraded_enter_failure_rate:
-                self._degradation_state = DegradationState.DEGRADED
-            return
-
-        if state == DegradationState.DEGRADED:
-            if failure_rate >= self.config.baseline_only_enter_failure_rate:
-                self._degradation_state = DegradationState.BASELINE_ONLY
-            elif failure_rate <= self.config.degraded_exit_failure_rate:
-                self._degradation_state = DegradationState.NORMAL
-            return
-
-        # baseline-only state recovery is intentionally stepwise: baseline-only -> degraded -> normal
-        if state == DegradationState.BASELINE_ONLY:
-            if failure_rate <= self.config.baseline_only_exit_failure_rate and self._breaker_state != CircuitState.OPEN:
-                self._degradation_state = DegradationState.DEGRADED
-
-    def _can_attempt_tollama(self, *, now: float) -> bool:
-        if self._breaker_state == CircuitState.OPEN:
-            if now < self._breaker_open_until:
-                return False
-            self._breaker_state = CircuitState.HALF_OPEN
-            self._half_open_probe_count = 0
-            self._half_open_success_count = 0
-
-        if self._breaker_state == CircuitState.HALF_OPEN:
-            if self._half_open_probe_count >= self.config.circuit_breaker_half_open_probe_requests:
-                self._breaker_state = CircuitState.OPEN
-                self._breaker_open_until = now + self.config.circuit_breaker_cooldown_s
-                return False
-            self._half_open_probe_count += 1
-
-        return True
-
-    def _on_tollama_success(self, *, now: float) -> None:
-        self._record_outcome(now=now, success=True)
-
-        if self._breaker_state == CircuitState.HALF_OPEN:
-            self._half_open_success_count += 1
-            if self._half_open_success_count >= self.config.circuit_breaker_half_open_successes_to_close:
-                self._breaker_state = CircuitState.CLOSED
-                self._half_open_probe_count = 0
-                self._half_open_success_count = 0
-        self._update_degradation_state(now=now)
-
-    def _on_tollama_failure(self, *, now: float) -> None:
-        self._record_outcome(now=now, success=False)
-
-        if self._breaker_state == CircuitState.HALF_OPEN:
-            self._breaker_state = CircuitState.OPEN
-            self._breaker_open_until = now + self.config.circuit_breaker_cooldown_s
-        else:
+        with self._state_lock:
             failure_rate = self._failure_rate(
                 now=now,
-                window_s=self.config.circuit_breaker_window_s,
-                min_requests=self.config.circuit_breaker_min_requests,
+                window_s=self.config.degradation_window_s,
+                min_requests=self.config.degradation_min_requests,
             )
-            if failure_rate is not None and failure_rate >= self.config.circuit_breaker_failure_rate_to_open:
+            if failure_rate is None:
+                return
+
+            state = self._degradation_state
+            if state == DegradationState.NORMAL:
+                if failure_rate >= self.config.baseline_only_enter_failure_rate:
+                    self._degradation_state = DegradationState.BASELINE_ONLY
+                elif failure_rate >= self.config.degraded_enter_failure_rate:
+                    self._degradation_state = DegradationState.DEGRADED
+                return
+
+            if state == DegradationState.DEGRADED:
+                if failure_rate >= self.config.baseline_only_enter_failure_rate:
+                    self._degradation_state = DegradationState.BASELINE_ONLY
+                elif failure_rate <= self.config.degraded_exit_failure_rate:
+                    self._degradation_state = DegradationState.NORMAL
+                return
+
+            # baseline-only state recovery is intentionally stepwise: baseline-only -> degraded -> normal
+            if state == DegradationState.BASELINE_ONLY:
+                if (
+                    failure_rate <= self.config.baseline_only_exit_failure_rate
+                    and self._breaker_state != CircuitState.OPEN
+                ):
+                    self._degradation_state = DegradationState.DEGRADED
+
+    def _can_attempt_tollama(self, *, now: float) -> bool:
+        with self._state_lock:
+            if self._breaker_state == CircuitState.OPEN:
+                if now < self._breaker_open_until:
+                    return False
+                self._breaker_state = CircuitState.HALF_OPEN
+                self._half_open_probe_count = 0
+                self._half_open_success_count = 0
+
+            if self._breaker_state == CircuitState.HALF_OPEN:
+                if self._half_open_probe_count >= self.config.circuit_breaker_half_open_probe_requests:
+                    self._breaker_state = CircuitState.OPEN
+                    self._breaker_open_until = now + self.config.circuit_breaker_cooldown_s
+                    return False
+                self._half_open_probe_count += 1
+
+            return True
+
+    def _on_tollama_success(self, *, now: float) -> None:
+        with self._state_lock:
+            self._record_outcome(now=now, success=True)
+
+            if self._breaker_state == CircuitState.HALF_OPEN:
+                self._half_open_success_count += 1
+                if self._half_open_success_count >= self.config.circuit_breaker_half_open_successes_to_close:
+                    self._breaker_state = CircuitState.CLOSED
+                    self._half_open_probe_count = 0
+                    self._half_open_success_count = 0
+            self._update_degradation_state(now=now)
+
+    def _on_tollama_failure(self, *, now: float) -> None:
+        with self._state_lock:
+            self._record_outcome(now=now, success=False)
+
+            if self._breaker_state == CircuitState.HALF_OPEN:
                 self._breaker_state = CircuitState.OPEN
                 self._breaker_open_until = now + self.config.circuit_breaker_cooldown_s
+            else:
+                failure_rate = self._failure_rate(
+                    now=now,
+                    window_s=self.config.circuit_breaker_window_s,
+                    min_requests=self.config.circuit_breaker_min_requests,
+                )
+                if failure_rate is not None and failure_rate >= self.config.circuit_breaker_failure_rate_to_open:
+                    self._breaker_state = CircuitState.OPEN
+                    self._breaker_open_until = now + self.config.circuit_breaker_cooldown_s
 
-        self._update_degradation_state(now=now)
+            self._update_degradation_state(now=now)
 
     def render_prometheus_metrics(self) -> str:
         return self.metrics_emitter.render_prometheus()
 
     def forecast(self, request: Mapping[str, Any]) -> dict[str, Any]:
         started = time.perf_counter()
+        request = self._normalize_forecast_request(request)
+        self._validate_forecast_request(request)
         rollout_stage = str(request.get("rollout_stage") or self.config.rollout_stage)
         bucket = str(request.get("liquidity_bucket") or "unknown")
         self.metrics_emitter.set_gauge("tsfm_target_coverage", self.config.target_coverage, rollout_stage=rollout_stage, bucket=bucket)
 
         cache_key = self._cache_key(request)
-        cached = self._read_cache(cache_key)
+        with self._state_lock:
+            cached = self._read_cache(cache_key)
         if cached is not None:
             cached_value, _ = cached
             cached_meta = dict(cached_value.get("meta", {}))
@@ -435,14 +549,22 @@ class TSFMRunnerService:
             self.metrics_emitter.observe_cycle_time_s(time.perf_counter() - started, market_id=str(request.get("market_id") or "unknown"))
             return cached_value
 
-        market_id = str(request["market_id"])
+        market_id = str(request.get("market_id") or "unknown")
         as_of_ts = str(request.get("as_of_ts") or datetime.now(timezone.utc).isoformat())
-        freq = str(request.get("freq") or self.config.default_freq)
-        step_seconds = _parse_freq_to_seconds(freq)
+        freq = str(request.get("freq") if request.get("freq") is not None else self.config.default_freq)
+        try:
+            step_seconds = _parse_freq_to_seconds(freq)
+        except ValueError as exc:
+            raise TSFMServiceInputError(f"malformed input: freq must be valid, got={freq}") from exc
         horizon_steps = int(request.get("horizon_steps") or self.config.default_horizon_steps)
         quantiles = [float(q) for q in (request.get("quantiles") or self.config.default_quantiles)]
         quantiles = sorted(quantiles)
         y_raw = [float(v) for v in request.get("y", [])]
+        self._validate_input_consistency(
+            request=request,
+            y_length=len(y_raw),
+            freq_seconds=step_seconds,
+        )
         transform = request.get("transform") or {}
         space = str(transform.get("space") or self.config.transform_space)
         eps = float(transform.get("eps") or self.config.transform_eps)
@@ -516,6 +638,13 @@ class TSFMRunnerService:
                 meta.update(adapter_meta)
                 self._on_tollama_success(now=now)
             except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "TSFM tollama forecast failed; using fallback | market=%s horizon=%s freq=%s reason=%s",
+                    market_id,
+                    horizon_steps,
+                    freq,
+                    type(exc).__name__,
+                )
                 self._on_tollama_failure(now=now)
                 stale = self._read_cache(cache_key, allow_stale=True)
                 if stale is not None:
@@ -537,24 +666,44 @@ class TSFMRunnerService:
                     self.metrics_emitter.observe_request_latency_ms((time.perf_counter() - started) * 1000.0, rollout_stage=rollout_stage)
                     self.metrics_emitter.observe_cycle_time_s(time.perf_counter() - started, market_id=market_id)
                     return stale_value
-                fallback_reason = f"tollama_error:{exc}"
+                warnings.append(f"tollama_error:{type(exc).__name__}")
+                warnings.append(str(exc))
+                fallback_reason = f"tollama_error:{type(exc).__name__}"
 
         if fallback_reason is not None:
-            band = forecast_baseline_band(
-                y_input,
-                method=self.config.baseline_method,
-                horizon_steps=horizon_steps,
-                step_seconds=step_seconds,
-                market_id=market_id,
-                ts=as_of_ts,
-                use_logit=use_logit,
-                eps=eps,
+            logger.info(
+                "TSFM fallback path; market=%s reason=%s y_len=%s freq=%s horizon=%s",
+                market_id,
+                fallback_reason,
+                len(y_raw),
+                freq,
+                horizon_steps,
             )
-            quantile_paths = {
-                0.1: [float(band["q10"])] * horizon_steps,
-                0.5: [float(band["q50"])] * horizon_steps,
-                0.9: [float(band["q90"])] * horizon_steps,
-            }
+            try:
+                band = forecast_baseline_band(
+                    y_input,
+                    method=self.config.baseline_method,
+                    horizon_steps=horizon_steps,
+                    step_seconds=step_seconds,
+                    market_id=market_id,
+                    ts=as_of_ts,
+                    use_logit=use_logit,
+                    eps=eps,
+                )
+                quantile_paths = {
+                    0.1: [float(band["q10"])] * horizon_steps,
+                    0.5: [float(band["q50"])] * horizon_steps,
+                    0.9: [float(band["q90"])] * horizon_steps,
+                }
+            except Exception as exc:  # noqa: BLE001
+                self.metrics_emitter.inc("tsfm_invalid_output_total", rollout_stage=rollout_stage)
+                base = _clip01(_logit(0.5, eps) if use_logit else 0.5)
+                quantile_paths = {
+                    0.1: [max(0.0, base - self.config.min_interval_width / 2)] * horizon_steps,
+                    0.5: [base] * horizon_steps,
+                    0.9: [min(1.0, base + self.config.min_interval_width / 2)] * horizon_steps,
+                }
+                fallback_reason = f"baseline_error:{type(exc).__name__}"
             meta["runtime"] = "baseline"
             meta["fallback_used"] = True
             meta["fallback_reason"] = fallback_reason

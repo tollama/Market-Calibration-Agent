@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+from bisect import bisect_right
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .schemas import MarketDetailResponse, MarketMetricsResponse
+
+logger = logging.getLogger(__name__)
+
+_record_read_metrics = Counter(
+    malformed_lines=0,
+    non_dict_records=0,
+    empty_lines=0,
+    parsed_records=0,
+    non_parseable_documents=0,
+)
 
 
 def _normalize_utc(value: datetime) -> datetime:
@@ -28,25 +41,109 @@ def _read_records(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
         return []
 
-    raw = path.read_text(encoding="utf-8").strip()
-    if raw == "":
+    local_metrics: Counter[str] = Counter()
+
+    def _inc(key: str, amount: int = 1) -> None:
+        _record_read_metrics[key] += amount
+        local_metrics[key] += amount
+
+    raw = path.read_text(encoding="utf-8")
+    if raw.strip() == "":
+        _inc("empty_lines", raw.count("\n") or 1)
+        logger.info(
+            "record_read_metrics path=%s parsed=0 malformed=0 empty=%s non_dict=0 non_parseable=0", path, local_metrics["empty_lines"]
+        )
         return []
 
     try:
         loaded = json.loads(raw)
+        if isinstance(loaded, list):
+            records = [item for item in loaded if isinstance(item, dict)]
+            for _ in records:
+                _inc("parsed_records")
+            if len(records) < len(loaded):
+                _inc("non_dict_records", len(loaded) - len(records))
+            logger.debug("Parsed full-record JSON for %s with %d valid records", path, len(records))
+            logger.info(
+                "record_read_metrics path=%s parsed=%s malformed=%s empty=%s non_dict=%s non_parseable=%s",
+                path,
+                local_metrics["parsed_records"],
+                local_metrics["malformed_lines"],
+                local_metrics["empty_lines"],
+                local_metrics["non_dict_records"],
+                local_metrics["non_parseable_documents"],
+            )
+            return records
+        if isinstance(loaded, dict):
+            _inc("parsed_records")
+            logger.info(
+                "record_read_metrics path=%s parsed=%s malformed=%s empty=%s non_dict=%s non_parseable=%s",
+                path,
+                local_metrics["parsed_records"],
+                local_metrics["malformed_lines"],
+                local_metrics["empty_lines"],
+                local_metrics["non_dict_records"],
+                local_metrics["non_parseable_documents"],
+            )
+            return [loaded]
+
+        _inc("non_parseable_documents")
+        logger.warning("Skipping non-dict JSON document in %s", path)
+        logger.info(
+            "record_read_metrics path=%s parsed=%s malformed=%s empty=%s non_dict=%s non_parseable=%s",
+            path,
+            local_metrics["parsed_records"],
+            local_metrics["malformed_lines"],
+            local_metrics["empty_lines"],
+            local_metrics["non_dict_records"],
+            local_metrics["non_parseable_documents"],
+        )
+        return []
     except json.JSONDecodeError:
         records: List[Dict[str, Any]] = []
-        for line in raw.splitlines():
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
-        return records
+        for line_no, raw_line in enumerate(raw.splitlines(), start=1):
+            line = raw_line.strip()
+            if not line:
+                _inc("empty_lines")
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError as exc:
+                _inc("malformed_lines")
+                logger.warning("Skipping malformed JSON in %s at line %s: %s", path, line_no, exc)
+                continue
 
-    if isinstance(loaded, list):
-        return [item for item in loaded if isinstance(item, dict)]
-    if isinstance(loaded, dict):
-        return [loaded]
-    return []
+            if not isinstance(parsed, dict):
+                _inc("non_dict_records")
+                logger.warning(
+                    "Skipping non-dict record in %s at line %s (type=%s)",
+                    path,
+                    line_no,
+                    type(parsed).__name__,
+                )
+                continue
+
+            records.append(parsed)
+            _inc("parsed_records")
+
+        logger.debug(
+            "Loaded %s records from line-delimited JSON in %s (malformed=%s, empty=%s, non_dict=%s)",
+            len(records),
+            path,
+            local_metrics["malformed_lines"],
+            local_metrics["empty_lines"],
+            local_metrics["non_dict_records"],
+        )
+        logger.info(
+            "record_read_metrics path=%s parsed=%s malformed=%s empty=%s non_dict=%s non_parseable=%s",
+            path,
+            local_metrics["parsed_records"],
+            local_metrics["malformed_lines"],
+            local_metrics["empty_lines"],
+            local_metrics["non_dict_records"],
+            local_metrics["non_parseable_documents"],
+        )
+        return records
 
 
 def _parse_record_datetime(record: Dict[str, Any], field: str) -> Optional[datetime]:
@@ -64,6 +161,10 @@ class LocalDerivedStore:
 
     def __init__(self, derived_root: Path) -> None:
         self.derived_root = derived_root
+        self._alerts_cache_signature: tuple[tuple[str, int, int], ...] = ()
+        self._alerts_sorted: list[Dict[str, Any]] = []
+        self._alerts_sorted_with_ts: list[Tuple[datetime, Dict[str, Any]]] = []
+        self._alerts_latest_by_market: dict[str, Dict[str, Any]] = {}
 
     @property
     def scoreboard_path(self) -> Path:
@@ -121,6 +222,59 @@ class LocalDerivedStore:
 
         return deduped
 
+    def _alerts_source_signature(self) -> tuple[tuple[str, int, int], ...]:
+        if self.alerts_path.exists():
+            stat = self.alerts_path.stat()
+            return ((str(self.alerts_path), stat.st_mtime_ns, stat.st_size),)
+
+        partition_root = self.derived_root / "alerts"
+        partitions = sorted(partition_root.glob("dt=*/alerts.json"))
+        signature: list[tuple[str, int, int]] = []
+        for path in partitions:
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            signature.append((str(path), stat.st_mtime_ns, stat.st_size))
+        return tuple(signature)
+
+    def _refresh_alerts_cache(self) -> None:
+        signature = self._alerts_source_signature()
+        if signature == self._alerts_cache_signature:
+            return
+
+        records = _read_records(self.alerts_path)
+        if not self.alerts_path.exists():
+            records = self._scan_partition_records(
+                root=self.derived_root / "alerts",
+                filename="alerts.json",
+            )
+            records = self._dedupe_alert_records(records)
+
+        sorted_records: list[Dict[str, Any]] = sorted(
+            records,
+            key=lambda item: _parse_record_datetime(item, "ts")
+            or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        sorted_with_ts = [
+            (_parse_record_datetime(item, "ts") or datetime.min.replace(tzinfo=timezone.utc), item)
+            for item in sorted_records
+        ]
+
+        latest_by_market: dict[str, Dict[str, Any]] = {}
+        for _, item in sorted_with_ts:
+            market_id = str(item.get("market_id") or "")
+            if market_id and market_id not in latest_by_market:
+                latest_by_market[market_id] = item
+
+        self._alerts_cache_signature = signature
+        self._alerts_sorted = sorted_records
+        self._alerts_sorted_with_ts = [
+            (ts, item) for ts, item in sorted_with_ts if item.get("ts") is not None
+        ]
+        self._alerts_latest_by_market = latest_by_market
+
     def load_scoreboard(self, *, window: str) -> List[Dict[str, Any]]:
         records = _read_records(self.scoreboard_path)
         if not self.scoreboard_path.exists():
@@ -148,28 +302,19 @@ class LocalDerivedStore:
         limit: int,
         offset: int,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        records = _read_records(self.alerts_path)
-        if not self.alerts_path.exists():
-            records = self._scan_partition_records(
-                root=self.derived_root / "alerts",
-                filename="alerts.json",
-            )
-            records = self._dedupe_alert_records(records)
+        self._refresh_alerts_cache()
 
         since_utc = _normalize_utc(since) if since else None
-
-        filtered: List[Dict[str, Any]] = []
-        for record in records:
-            record_ts = _parse_record_datetime(record, "ts")
-            if since_utc and (record_ts is None or record_ts < since_utc):
-                continue
-            filtered.append(record)
-
-        filtered.sort(
-            key=lambda item: _parse_record_datetime(item, "ts")
-            or datetime.min.replace(tzinfo=timezone.utc),
-            reverse=True,
-        )
+        if since_utc is None:
+            filtered = self._alerts_sorted
+        else:
+            ts_cursor = [ts.timestamp() for ts, _ in self._alerts_sorted_with_ts]
+            if not ts_cursor:
+                filtered = []
+            else:
+                since_epoch = since_utc.timestamp()
+                cursor = bisect_right([-ts for ts in ts_cursor], -since_epoch)
+                filtered = [item for _, item in self._alerts_sorted_with_ts[:cursor]]
 
         total = len(filtered)
         return filtered[offset : offset + limit], total

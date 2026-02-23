@@ -664,13 +664,17 @@ def _normalize_stage_output(
     raw_output: Any,
     *,
     attempt: int,
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[dict[str, Any], bool, bool]:
     if not isinstance(raw_output, Mapping):
-        return _build_stage_failure_output(
-            stage_name,
-            "stage output must be a mapping",
-            attempt=attempt,
-        ), True
+        return (
+            _build_stage_failure_output(
+                stage_name,
+                "stage output must be a mapping",
+                attempt=attempt,
+            ),
+            True,
+            False,
+        )
 
     output: dict[str, Any] = dict(raw_output)
     output.setdefault("stage", stage_name)
@@ -682,14 +686,19 @@ def _normalize_stage_output(
 
     if output["status"] == "failed":
         output.setdefault("reason", "stage reported failure")
-        output.setdefault(
-            "failure",
-            {
+        failure = output.get("failure")
+        if not isinstance(failure, Mapping):
+            failure = {
                 "source": "stage",
                 "message": str(output.get("reason")),
-            },
-        )
-        return output, True
+            }
+        else:
+            failure = dict(failure)
+        failure.setdefault("source", "stage")
+        failure.setdefault("message", str(output.get("reason")))
+        failure.setdefault("recoverable", False)
+        output["failure"] = failure
+        return output, True, bool(failure.get("recoverable"))
 
     if output["status"] == "no-op":
         output.setdefault(
@@ -697,9 +706,10 @@ def _normalize_stage_output(
             {
                 "source": "pipeline",
                 "message": output.get("reason", "optional pipeline component unavailable"),
+                "recoverable": True,
             },
         )
-    return output, False
+    return output, False, False
 
 
 def _build_stage_failure_output(
@@ -708,10 +718,12 @@ def _build_stage_failure_output(
     *,
     attempt: int,
     exc: BaseException | None = None,
+    recoverable: bool = False,
 ) -> dict[str, Any]:
     failure: dict[str, Any] = {
         "source": "pipeline",
         "message": message,
+        "recoverable": recoverable,
     }
     if exc is not None:
         failure.update(
@@ -763,26 +775,22 @@ def _run_daily_stages(
             continue
 
         stage_result: StageResult | None = None
+        failed = False
+        recoverable = False
+
         for attempt in range(retry_limit + 1):
             try:
-                output, failed = _normalize_stage_output(
+                output, failed, recoverable = _normalize_stage_output(
                     stage.name,
                     stage.handler(context),
                     attempt=attempt,
                 )
-                if failed:
-                    stage_result = StageResult(
-                        name=stage.name,
-                        status="failed",
-                        output=output,
-                        error=str(output.get("failure", {}).get("message")),
-                    )
-                else:
-                    stage_result = StageResult(
-                        name=stage.name,
-                        status="success",
-                        output=output,
-                    )
+                stage_result = StageResult(
+                    name=stage.name,
+                    status="failed" if failed else "success",
+                    output=output,
+                    error=str(output.get("failure", {}).get("message")) if failed else None,
+                )
                 break
             except Exception as exc:  # pragma: no cover - defensive skeleton behavior
                 if attempt < retry_limit:
@@ -792,7 +800,10 @@ def _run_daily_stages(
                     "stage handler raised an exception",
                     attempt=attempt,
                     exc=exc,
+                    recoverable=False,
                 )
+                failed = True
+                recoverable = False
                 stage_result = StageResult(
                     name=stage.name,
                     status="failed",
@@ -809,11 +820,25 @@ def _run_daily_stages(
                     stage.name,
                     "stage execution did not produce a result",
                     attempt=0,
+                    recoverable=False,
                 ),
                 error="stage execution did not produce a result",
             )
+            failed = True
 
-        if stage_result.status == "failed" and not continue_on_stage_failure:
+        should_continue = continue_on_stage_failure or not failed or recoverable
+        if failed:
+            output_failure = stage_result.output.setdefault(
+                "failure",
+                {},
+            ) if isinstance(stage_result.output, Mapping) else {}
+            output_failure.setdefault(
+                "classification",
+                "recoverable" if recoverable else "critical",
+            )
+
+        if failed and not should_continue:
+            stage_result.output.setdefault("failure_classification", "critical")
             stage_result.output.setdefault("stopped", True)
             stage_result.output.setdefault("stop_condition", "continue_on_stage_failure=false")
 
@@ -827,7 +852,8 @@ def _run_daily_stages(
                     backfill_days=backfill_days,
                 ),
             )
-        if stage_result.status == "failed" and not continue_on_stage_failure:
+
+        if not should_continue:
             break
 
     return PipelineResult(
@@ -887,6 +913,17 @@ def run_daily_job(
         "stage_order": [stage.name for stage in result.stages],
         "stages": stage_payloads,
     }
+    if not result.success:
+        first_failed = next((stage for stage in stage_payloads if stage["status"] == "failed"), None)
+        if first_failed is not None:
+            failure = first_failed.get("output", {}).get("failure", {}) if isinstance(first_failed.get("output"), Mapping) else {}
+            payload["failure"] = {
+                "stage": first_failed.get("name"),
+                "reason": first_failed.get("output", {}).get("reason"),
+                "recoverable": bool(failure.get("recoverable")) if isinstance(failure, Mapping) else False,
+                "classification": failure.get("classification") if isinstance(failure, Mapping) else "critical",
+                "source": failure.get("source") if isinstance(failure, Mapping) else "pipeline",
+            }
     if stopped_early:
         payload["stopped_early"] = True
         payload["stop_condition"] = "continue_on_stage_failure=false"

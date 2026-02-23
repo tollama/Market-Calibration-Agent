@@ -12,6 +12,28 @@ import hmac
 import os
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+
+_PLACEHOLDER_TOKENS = {
+    "changemeplease",
+    "your-token",
+    "demo-token",
+    "dev-token",
+    "tsfm-dev-token",
+    "example",
+    "changeme",
+    "placeholder",
+}
+
+
+def _is_placeholder_token(value: str | None) -> bool:
+    if value is None:
+        return True
+    normalized = value.strip().lower()
+    if not normalized:
+        return True
+    return normalized in _PLACEHOLDER_TOKENS
+
+
 from fastapi.responses import PlainTextResponse
 
 from .dependencies import LocalDerivedStore, get_derived_store
@@ -26,10 +48,11 @@ from .schemas import (
     PostmortemResponse,
     ScoreboardItem,
     ScoreboardResponse,
+    _validate_scoreboard_window,
     TSFMForecastRequest,
     TSFMForecastResponse,
 )
-from runners.tsfm_service import TSFMRunnerService
+from runners.tsfm_service import TSFMRunnerService, TSFMServiceInputError
 
 
 class _TSFMInboundGuard:
@@ -78,7 +101,7 @@ class _TSFMInboundGuard:
         expected_token = os.getenv(self.token_env_var)
 
         if self.require_auth:
-            if not expected_token:
+            if not expected_token or _is_placeholder_token(expected_token):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Unauthorized",
@@ -197,6 +220,11 @@ def get_scoreboard(
     min_trust_score: Optional[float] = Query(default=None),
     store: LocalDerivedStore = Depends(get_derived_store),
 ) -> ScoreboardResponse:
+    try:
+        window = _validate_scoreboard_window(window)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     records = store.load_scoreboard(window=window)
 
     if tag:
@@ -422,7 +450,10 @@ def get_postmortem(
 @app.post("/tsfm/forecast", response_model=TSFMForecastResponse)
 def post_tsfm_forecast(payload: TSFMForecastRequest, request: Request) -> TSFMForecastResponse:
     _tsfm_guard.enforce(request)
-    result = _tsfm_service.forecast(payload.model_dump(mode="json"))
+    try:
+        result = _tsfm_service.forecast(payload.model_dump(mode="json"))
+    except (TSFMServiceInputError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return TSFMForecastResponse(**result)
 
 

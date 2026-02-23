@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+_WINDOW_RE = re.compile(r"^(?P<count>\d+)(?P<unit>[a-zA-Z]+)$")
+
+
+def _validate_scoreboard_window(value: str) -> str:
+    normalized = str(value).strip()
+    match = _WINDOW_RE.fullmatch(normalized)
+    if match is None:
+        raise ValueError("window must use format like '90d' or '30w'")
+
+    count = int(match.group("count"))
+    if count <= 0:
+        raise ValueError("window value must be positive")
+    if count > 3650:
+        raise ValueError("window value must be <= 3650")
+
+    unit = match.group("unit").lower()
+    if unit not in {"d", "w", "day", "week", "h", "m"}:
+        raise ValueError("window unit must be one of d, w, day, week, h, m")
+    return normalized
 
 
 class ScoreboardItem(BaseModel):
@@ -18,6 +40,15 @@ class ScoreboardItem(BaseModel):
     liquidity_bucket: Optional[str] = None
     category: Optional[str] = None
     as_of: Optional[datetime] = None
+
+
+class ScoreboardQueryParams(BaseModel):
+    window: str = "90d"
+
+    @field_validator("window")
+    @classmethod
+    def _validate_window(cls, value: str) -> str:
+        return _validate_scoreboard_window(value)
 
 
 class ScoreboardResponse(BaseModel):
@@ -96,7 +127,7 @@ class TSFMForecastRequest(BaseModel):
     y: List[float]
     y_ts: Optional[List[datetime]] = None
     observed_ts: Optional[datetime] = None
-    max_gap_minutes: Optional[int] = None
+    max_gap_minutes: Optional[int] = Field(default=None, ge=0)
     x_past: Dict[str, List[float]] = Field(default_factory=dict)
     x_future: Dict[str, List[float]] = Field(default_factory=dict)
     transform: TSFMTransformConfig = Field(default_factory=TSFMTransformConfig)

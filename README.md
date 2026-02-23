@@ -1,36 +1,38 @@
 # Market Calibration Agent
 
-Bootstrap repository for calibrating market probabilities from streaming and historical market data.
+Market Calibration Agent is a production-oriented toolkit for monitoring, calibrating, and serving prediction-market probabilities from live and historical data.
 
-## MVP-1
+It combines data ingestion, calibration metrics, trust scoring, alerting, and forecast serving into one system.
 
-- Ingest market data via HTTP and websocket feeds.
-- Normalize and store tabular snapshots with `pandas`/`pyarrow`.
-- Run a baseline calibration pipeline from configurable YAML settings.
-- Emit threshold-based alerts using configurable rules.
+## What This App Can Do
 
-## MVP-2
+- Ingest Polymarket market/event data from REST, websocket, and subgraph sources.
+- Build deterministic feature frames and cutoff snapshots for calibration workflows.
+- Compute calibration metrics (Brier, log-loss, ECE, segments) and trust scores.
+- Generate alert feeds with configurable thresholds and gating policies.
+- Serve a read-only API for scoreboards, alerts, market summaries, and postmortems.
+- Serve TSFM forecast inference with runtime hardening:
+  - auth/rate-limit guard
+  - cache + stale-if-error
+  - circuit breaker + degradation modes
+  - baseline fallback and interval sanity checks
+- Run a Streamlit live demo UI for operational visibility.
 
-- Add multiple model profiles and model selection by market regime.
-- Introduce richer alert routing and suppression windows.
-- Add service endpoints for health, metrics, and calibration outputs.
-- Expand test coverage for config loading, calibration logic, and alerting.
+## Typical Use Cases
+
+- Quant/research teams validating market probability quality over time.
+- Ops teams monitoring market reliability and high-severity alert candidates.
+- Platform teams exposing calibrated market artifacts via API.
+- Model teams comparing baseline vs TSFM interval behavior in controlled rollouts.
 
 ## Quick Start
-
-## Performance Improvements
-
-We recently conducted a profiling session on the core entry points (`api/app.py` and `runners/tsfm_service.py`). The resulting flamegraphs (`fastapi.svg`, `tsfm.svg`) highlight CPU‑intensive functions and I/O bottlenecks. These insights guided targeted refactors such as:
-
-- Introducing async I/O for blocking network and file operations.
-- Caching repetitive computations with `functools.lru_cache`.
-- Switching to generators for large JSONL streams to reduce memory churn.
-
-Please refer to the profiling artifacts in the repository for detailed analysis.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install uv
+uv pip sync requirements.lock
 pip install -e .[dev]
 
 # For the live demo runtime (API + Streamlit UI):

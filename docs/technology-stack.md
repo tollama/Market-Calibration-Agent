@@ -4,7 +4,7 @@
 
 - Python `>=3.11` (declared in `pyproject.toml`).
 - Packaging/build: `setuptools` (`pyproject.toml`).
-- Dependency lock strategy: committed `requirements.lock` + `uv pip sync requirements.lock`.
+- Dependency lock strategy: committed `requirements.lock` + `uv pip sync requirements.lock` (CI often uses `uv pip sync --system requirements.lock`).
 
 ## Core Application Libraries
 

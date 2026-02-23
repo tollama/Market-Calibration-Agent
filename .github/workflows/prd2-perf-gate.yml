@@ -23,7 +23,7 @@ jobs:
           if ! command -v uv >/dev/null 2>&1; then
             python -m pip install uv
           fi
-          uv pip sync requirements.lock
+          uv pip sync --system requirements.lock
           pip install -e ".[dev]"
 
       - name: Run deterministic TSFM perf benchmark

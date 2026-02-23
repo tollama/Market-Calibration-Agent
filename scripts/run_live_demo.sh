@@ -14,6 +14,43 @@ DEMO_STATE_DIR="${DEMO_STATE_DIR:-$ROOT_DIR/.demo_state}"
 API_PID_FILE="$DEMO_STATE_DIR/api.pid"
 GUI_PID_FILE="$DEMO_STATE_DIR/gui.pid"
 
+_PLACEHOLDER_TOKENS=(
+  ""
+  "changemeplease"
+  "your-token"
+  "demo-token"
+  "dev-token"
+  "tsfm-dev-token"
+  "example"
+  "changeme"
+  "placeholder"
+)
+
+is_placeholder_token() {
+  local value="${1-}"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | xargs)"
+  for p in "${_PLACEHOLDER_TOKENS[@]}"; do
+    if [[ "$value" == "$p" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+infer_tsfm_token() {
+  TSFM_FORECAST_API_TOKEN="${TSFM_FORECAST_API_TOKEN:-${AUTH_TOKEN:-}}"
+  if is_placeholder_token "$TSFM_FORECAST_API_TOKEN"; then
+    DEMO_FORECAST_ENABLED=0
+    warn "TSFM_FORECAST_API_TOKEN is not set to a real token (current: '${TSFM_FORECAST_API_TOKEN:-}')."
+    warn "Set TSFM_FORECAST_API_TOKEN (or AUTH_TOKEN) to avoid /tsfm/forecast 401 errors during Run forecast."
+    say "지금은 데모 모드, forecast 비활성"
+  else
+    DEMO_FORECAST_ENABLED=1
+  fi
+  export TSFM_FORECAST_API_TOKEN
+  export AUTH_TOKEN="$TSFM_FORECAST_API_TOKEN"
+  export DEMO_FORECAST_ENABLED
+}
 mkdir -p "$DEMO_STATE_DIR"
 
 say() {
@@ -104,7 +141,13 @@ if port_in_use "$GUI_PORT"; then
 fi
 
 say "Ensuring runtime dependencies are available from package extras"
-"$PYTHON_BIN" -m pip install -q -e .[server,demo]
+if ! "$PYTHON_BIN" -m pip install -q -e ".[server,demo]"; then
+  warn "Editable install failed (flat-layout detected or package metadata error)."
+  warn "Falling back to source-tree import mode via PYTHONPATH."
+  export PYTHONPATH="${ROOT_DIR}${PYTHONPATH:+:$PYTHONPATH}"
+fi
+
+infer_tsfm_token
 
 say "Starting API on http://${API_HOST}:${API_PORT}"
 "$PYTHON_BIN" -m uvicorn api.app:app --host "$API_HOST" --port "$API_PORT" &

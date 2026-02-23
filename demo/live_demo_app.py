@@ -12,7 +12,38 @@ import pandas as pd
 import streamlit as st
 
 API_BASE = os.getenv("LIVE_DEMO_API_BASE", "http://127.0.0.1:8000")
-FORECAST_TOKEN = os.getenv("TSFM_FORECAST_API_TOKEN", "tsfm-dev-token")
+_PLACEHOLDER_TOKENS = {
+    "",
+    "changemeplease",
+    "your-token",
+    "demo-token",
+    "dev-token",
+    "tsfm-dev-token",
+    "example",
+    "changeme",
+    "placeholder",
+}
+
+
+def _is_placeholder_token(value: str | None) -> bool:
+    if value is None:
+        return True
+    return str(value).strip().lower() in _PLACEHOLDER_TOKENS
+
+
+def _is_forecast_enabled() -> bool:
+    raw_value = (os.getenv("DEMO_FORECAST_ENABLED", "") or "").strip().lower()
+    if raw_value in {"1", "true", "on", "yes", "y"}:
+        return True
+    if raw_value in {"0", "false", "off", "no", "n", ""}:
+        return False
+    return bool(FORECAST_TOKEN)
+
+
+RAW_FORECAST_TOKEN = os.getenv("TSFM_FORECAST_API_TOKEN") or os.getenv("AUTH_TOKEN", "")
+FORECAST_TOKEN = RAW_FORECAST_TOKEN if not _is_placeholder_token(RAW_FORECAST_TOKEN) else ""
+FORECAST_TOKEN_VALID = bool(FORECAST_TOKEN)
+DEMO_FORECAST_ENABLED = _is_forecast_enabled()
 SAMPLE_DATA_PATH = Path(__file__).resolve().parents[1] / "artifacts/demo/live_demo_sample_data.json"
 
 st.set_page_config(page_title="Market Calibration LIVE Demo v2", layout="wide")
@@ -28,6 +59,8 @@ I18N = {
         "compare": "Compare",
         "obs": "Observability",
         "safe_api_error": "Unable to load data from API right now. Please retry in a moment.",
+        "forecast_token_hint": "Forecast requires a valid TSFM token. Placeholder values are not supported (e.g., 'changeme', 'your-token', 'demo-token').\nUse a real token like: TSFM_FORECAST_API_TOKEN=abc123... (or set AUTH_TOKEN).",
+        "forecast_token_invalid": "The saved token is invalid or expired. Please update to a real TSFM token and restart the app (e.g., TSFM_FORECAST_API_TOKEN=abc123...).",
         "invalid_series": "Please input valid comma-separated numbers between 0 and 1.",
         "overview_help": "Use trust, alerts, and segment signals together. Single metrics can be noisy.",
         "trust_card": "Trust score combines calibration quality and alert context.",
@@ -102,6 +135,8 @@ I18N = {
         "compare": "비교",
         "obs": "관측성",
         "safe_api_error": "현재 API 데이터를 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.",
+        "forecast_token_hint": "Forecast를 실행하려면 유효한 TSFM 토큰이 필요합니다. 'changeme', 'your-token', 'demo-token' 같은 placeholder는 허용되지 않습니다.\n실제 토큰 예시: TSFM_FORECAST_API_TOKEN=abc123... (또는 AUTH_TOKEN).",
+        "forecast_token_invalid": "저장된 토큰이 만료되었거나 유효하지 않습니다. 유효한 TSFM 토큰으로 변경한 뒤 앱을 다시 시작해 주세요 (예: TSFM_FORECAST_API_TOKEN=abc123...).",
         "invalid_series": "0~1 범위의 숫자를 쉼표로 구분해 입력해 주세요.",
         "overview_help": "신뢰점수, 경보, 세그먼트 신호를 함께 보세요. 단일 지표는 노이즈가 있을 수 있습니다.",
         "trust_card": "신뢰점수는 캘리브레이션 품질과 경보 맥락을 함께 반영합니다.",
@@ -861,7 +896,11 @@ elif pages[page] == "detail":
         detail_state = st.session_state.setdefault("detail_results_by_market", {})
         detail_answers = st.session_state.setdefault("detail_quick_answers_by_market", {})
 
-        if st.button("Run forecast"):
+        forecast_enabled = DEMO_FORECAST_ENABLED and FORECAST_TOKEN_VALID
+        if not forecast_enabled:
+            st.warning(T["forecast_token_hint"])
+
+        if st.button("Run forecast", disabled=not forecast_enabled):
             try:
                 vals = parse_series(y)
             except ValueError:
@@ -881,10 +920,15 @@ elif pages[page] == "detail":
                 }
                 fc, fc_err = safe_post("/tsfm/forecast", payload, auth=True)
                 if fc_err:
-                    st.error(T["safe_api_error"])
-                    st.caption(f"forecast={fc_err}")
-                    if market_id in detail_state:
-                        detail_state[market_id]["stale_warning"] = f"Latest rerun failed ({fc_err}). Showing previous result."
+                    if fc_err.startswith("HTTP 401") or fc_err.startswith("HTTP 403"):
+                        st.warning(T["forecast_token_invalid"])
+                        if market_id in detail_state:
+                            detail_state[market_id]["stale_warning"] = "Forecast call blocked: invalid/expired token."
+                    else:
+                        st.error(T["safe_api_error"])
+                        st.caption(f"forecast={fc_err}")
+                        if market_id in detail_state:
+                            detail_state[market_id]["stale_warning"] = f"Latest rerun failed ({fc_err}). Showing previous result."
                 else:
                     detail_state[market_id] = {
                         "vals": vals,
@@ -896,7 +940,10 @@ elif pages[page] == "detail":
 
         saved_detail = detail_state.get(market_id)
         if not saved_detail:
-            st.caption("Run forecast to see results and quick answers." if lang == "en" else "예측 실행 후 결과와 빠른 질문 답변이 표시됩니다.")
+            if not forecast_enabled:
+                st.caption(T["forecast_token_hint"])
+            else:
+                st.caption("Run forecast to see results and quick answers." if lang == "en" else "예측 실행 후 결과와 빠른 질문 답변이 표시됩니다.")
         else:
             stale_warning = str(saved_detail.get("stale_warning") or "").strip()
             if stale_warning:

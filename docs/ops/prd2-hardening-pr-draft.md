@@ -35,20 +35,28 @@
 - PRD2 유닛 묶음 재실행:
   - `python3.11 -m pytest -q tests/unit/test_tsfm_runner_service.py tests/unit/test_api_tsfm_forecast.py tests/unit/test_tsfm_model_license_guard.py tests/unit/test_baseline_bands.py tests/unit/test_tsfm_base_contract.py`
   - 결과: **PASS (100% 통과)**
+- PRD2 원스텝 검증:
+  - `scripts/prd2_verify_all.sh`
+  - 결과: **PASS (overall_status: success)**, 요약: `artifacts/prd2_verify_summary.json`
+- `tests/unit` 전체 재실행:
+  - `python3.11 -m pytest -q tests/unit`
+  - 결과: **PASS (전체 통과)**
 
 ## 리스크/영향
 - OpenAPI smoke는 로컬 API 실행을 전제하므로 CI 구성에서 API 기동/기준 URL 타이밍 의존성이 생김.
 - `rollout_hardening_gate.sh`는 외부/환경 의존성이 높아(포트/토큰/파생 데이터 경로) 운영환경에서 토큰/권한 정책/실행 경로를 정확히 맞춰야 함.
+- 실행 차단 이력: 현재 환경의 `/bin/bash`가 3.2.57이라 `${var,,}` 확장을 지원하지 않아 스크립트 실행 직전에 `bad substitution` 실패. gate 실행 전 `bash >= 4`(또는 스크립트 호환 수정) 검토 필요.
 - Concurrency/fallback 경로를 더 많이 다루는 변경이므로, 실제 운영 트래픽에서 캐시/회로회복 동작(스레드 안전성, 상태 저장)이 추가 모니터링 대상.
 
 ## 체크리스트
 - [x] 커밋 전/후 `git status` 및 `git log` 확인
 - [x] P1 핵심 회귀 테스트 묶음 재실행 및 통과 기록
 - [x] 테스트/CI/문서/코드로 분할 커밋
-- [ ] `python3.11 -m pytest -q tests/unit` 전체 런 (선택: 더 긴 전체 회귀)
-- [ ] `scripts/rollout_hardening_gate.sh` 실제 운영 환경에서 `TSFM_FORECAST_API_TOKEN` 유효값으로 1회 이상 실행
+- [x] `python3.11 -m pytest -q tests/unit` 전체 런 (선택: 더 긴 전체 회귀)
+- [ ] `scripts/rollout_hardening_gate.sh` 실제 운영 환경에서 `TSFM_FORECAST_API_TOKEN` 유효값으로 1회 이상 실행 (현재 환경에서는 bash 호환성으로 차단)
 
 ## 생성된 커밋
+- `e60cb0e` docs: add PR draft for hardening rollout and validation results
 - `4b1d452` test: add tsfm hardening and robustness coverage
 - `9aa010b` ci: hardening gate extends openapi smoke and TSFM checks
 - `742f2e0` docs: add tsfm hardening docs and release checklist updates

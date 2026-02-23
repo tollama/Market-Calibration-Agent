@@ -77,6 +77,16 @@ release_blockers:
     severity: blocker
     type: file
     path: scripts/prd2_verify_all.sh
+  - id: RB-014
+    title: TSFM hardening gate script exists
+    severity: blocker
+    type: file
+    path: scripts/rollout_hardening_gate.sh
+  - id: RB-015
+    title: TSFM hardening gate docs exist
+    severity: blocker
+    type: file
+    path: docs/ops/tsfm-hardening-gate.md
 
 p1_items:
   - id: P1-001
@@ -111,6 +121,11 @@ p1_items:
     type: command
     command: "{PYTHON_BIN} -m pytest tests/integration/test_tollama_live_integration.py -q"
     timeout_s: 240
+  - id: P1-007
+    title: Rollout hardening gate docs are present
+    severity: p1
+    type: file
+    path: docs/ops/tsfm-hardening-gate.md
 
 metadata:
   owner: calibration-platform

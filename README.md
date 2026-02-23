@@ -51,9 +51,31 @@ pip install -e .[test]
 pytest
 ```
 
-## Dependency locking (optional)
+## Dependency locking (required)
+
+This repository uses a committed frozen lockfile:
+- `requirements.lock`
+- Install with `uv pip sync --frozen requirements.lock`
 
 See [dependency lockfile strategy](docs/dependency-lockfile-strategy.md).
+
+## TSFM forecast API hardening notes
+
+- Inbound auth: set `TSFM_FORECAST_API_TOKEN` (or `AUTH_TOKEN`) to a non-placeholder secret (`demo-token`/`tsfm-dev-token`/`changeme` 등 금지), and call `/tsfm/forecast` with `Authorization: Bearer <token>` (or `X-API-Key: <token>`).
+- Runtime integration tokens: live tollama calls read `TOLLAMA_TOKEN` when calling downstream model runtime.
+- Forecast request constraints and fallback behavior are documented in [TSFM Forecast Operational Policy](docs/ops/tsfm-forecast-operational-policy.md).
+- Hardening preflight command is documented in [TSFM Hardening Gate](docs/ops/tsfm-hardening-gate.md):
+
+```bash
+API_BASE=http://127.0.0.1:8100 TSFM_FORECAST_API_TOKEN=<real-secret> scripts/rollout_hardening_gate.sh
+```
+
+### 사전조건/실행/검증/실패시 대응
+
+- **사전조건**: Python 3.11+, `requirements.lock` 동기화 상태 점검, 실운영 토큰 미설정/placeholder 확인.
+- **실행**: 위 하드닝 게이트 문서의 환경변수를 설정 후 실행.
+- **검증**: `artifacts/rollout_gate/rollout_hardening_gate_summary.json`의 `overall_status`가 `success`인지 확인하고, step 로그를 통해 실패 지점을 확인.
+- **실패시 대응**: 토큰·포트·Tollama 경로·레이트리밋 실패를 순차 점검 후 수정하고 게이트를 재실행.
 
 ## Config Files
 
@@ -61,6 +83,8 @@ See [dependency lockfile strategy](docs/dependency-lockfile-strategy.md).
 - `configs/alerts.yaml` - alert thresholds, cooldowns, and channels.
 - `configs/models.yaml` - model profiles and feature settings.
 - `configs/logging.yaml` - Python logging configuration.
+- `configs/tsfm_runtime.yaml` - TSFM runtime/adapter thresholds and circuit breaker.
+- `configs/tsfm_models.yaml` - TSFM model list and metadata.
 
 ## Architecture / Notes
 

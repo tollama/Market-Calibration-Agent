@@ -11,6 +11,7 @@ Validate the real TSFM runtime path (`TollamaAdapter` + `TSFMRunnerService`) aga
 ## Required Environment Variables
 - `LIVE_TOLLAMA_TESTS=1`
 - `TOLLAMA_BASE_URL` (default: `http://localhost:11435`)
+- `TSFM_FORECAST_API_TOKEN` should be set for `/tsfm/forecast` path assertions when endpoint security is enabled.
 
 Optional:
 - `TOLLAMA_TOKEN`
@@ -19,6 +20,8 @@ Optional:
 - `TOLLAMA_MODEL_VERSION`
 - `TOLLAMA_TIMEOUT_S` (default in test: `8`)
 - `TOLLAMA_RETRY_COUNT` (default in test: `0`)
+
+For runtime/forecast constraints and fallback policy, see: `docs/ops/tsfm-forecast-operational-policy.md`.
 
 ## Local Execution
 ```bash

@@ -30,6 +30,10 @@ Rollback to baseline-only if **ANY** occurs:
 4. `fallback_rate > 0.20` for **15 minutes** (outside planned incident drill)
 5. `breaker_open_rate > 0.30` for **15 minutes**
 
+Fallback reasons are part of TSFM meta (`fallback_reason`) and metrics (`tsfm_fallback_total`); use these in pre/post-incident reviews.
+
+For complete fallback semantics and operational recovery behavior, see: `docs/ops/tsfm-forecast-operational-policy.md`.
+
 ## 3) Rollback actions
 
 1. Freeze promotion; stop traffic increase immediately.
@@ -97,3 +101,40 @@ Expected output fields:
 ```
 
 All arrays must be aligned by 5-minute window.
+
+## 7) Post-checkpoint hardening gate review
+
+Before a rollout gate decision is finalized, append a hardening checkpoint review to this section from
+`scripts/rollout_hardening_gate.sh` output:
+
+- summary file: `artifacts/rollout_gate/rollout_hardening_gate_summary.json`
+- openapi report: `artifacts/rollout_gate/logs/openapi_smoke_report.json`
+
+Example review checklist:
+
+- [ ] Gate summary `overall_status` is `success`.
+- [ ] OpenAPI smoke status is `PASS`.
+- [ ] No failed step rows (`run_step`) with hard failures.
+- [ ] Security checks report 401/200 expectations as expected.
+- [ ] Perf smoke result includes `ok: true`.
+
+Suggested append format for this runbook:
+
+```markdown
+### Hardening gate (YYYY-MM-DD)
+- Summary: artifacts/rollout_gate/rollout_hardening_gate_summary.json
+- OpenAPI: artifacts/rollout_gate/logs/openapi_smoke_report.json
+- Decision: PASS / FAIL
+- Review notes:
+  - Overall status:
+  - OpenAPI status:
+  - Notable failures / mitigations:
+  - Required follow-up:
+```
+
+Helpful commands:
+
+```bash
+cat artifacts/rollout_gate/rollout_hardening_gate_summary.json
+cat artifacts/rollout_gate/logs/openapi_smoke_report.json
+```

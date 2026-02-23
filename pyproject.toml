@@ -33,6 +33,24 @@ dev = [
   "pytest>=8.1,<9",
 ]
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+  "agents*",
+  "api*",
+  "calibration*",
+  "connectors*",
+  "features*",
+  "llm*",
+  "pipelines*",
+  "registry*",
+  "reports*",
+  "runners*",
+  "schemas*",
+  "storage*",
+]
+namespaces = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

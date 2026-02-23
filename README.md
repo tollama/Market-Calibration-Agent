@@ -55,7 +55,7 @@ pytest
 
 This repository uses a committed frozen lockfile:
 - `requirements.lock`
-- Install with `uv pip sync --frozen requirements.lock`
+- Install with `uv pip sync requirements.lock`
 
 See [dependency lockfile strategy](docs/dependency-lockfile-strategy.md).
 

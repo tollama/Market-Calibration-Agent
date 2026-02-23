@@ -5,10 +5,10 @@
 `pyproject.toml` defines constraints and we keep a committed lockfile:
 - `requirements.lock`
 
-Dependency install in CI and production scripts is expected to use frozen resolution:
+Dependency install in CI and production scripts is expected to use lockfile sync:
 
 ```bash
-uv pip sync --frozen requirements.lock
+uv pip sync requirements.lock
 ```
 
 This guarantees deterministic installs and blocks accidental drift at install time.

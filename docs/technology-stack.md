@@ -4,7 +4,7 @@
 
 - Python `>=3.11` (declared in `pyproject.toml`).
 - Packaging/build: `setuptools` (`pyproject.toml`).
-- Dependency lock strategy: committed `requirements.lock` + `uv pip sync --frozen`.
+- Dependency lock strategy: committed `requirements.lock` + `uv pip sync requirements.lock`.
 
 ## Core Application Libraries
 
@@ -74,4 +74,3 @@
   - unit tests + PRD1 acceptance selections
   - PRD2 one-command release verification and artifact upload
   - optional scheduled live tollama integration tests
-

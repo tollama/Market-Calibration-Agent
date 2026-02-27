@@ -98,3 +98,4 @@ API_BASE=http://127.0.0.1:8100 TSFM_FORECAST_API_TOKEN=<real-secret> scripts/rol
 - [PRD2 Dashboards (TSFM observability)](docs/ops/prd2-dashboards.md) - Grafana dashboard import/provisioning and panel expectations
 - [Conformal calibration ops guide](docs/conformal-ops.md) - rolling updater, state persistence, manual/cron runbook
 - [Label resolver defaults and precedence](docs/label-resolver-defaults.md)
+- [Single App 운영 Runbook](docs/ops/single-app-ops-runbook.md) - ADMIN 토큰 로테이션, compose 운영 기준, dryRun=false 안전 카나리

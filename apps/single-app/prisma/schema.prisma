@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Order {
+  id          String   @id @default(cuid())
+  market      String
+  side        String
+  quantity    Decimal  @db.Decimal(18, 8)
+  price       Decimal? @db.Decimal(18, 8)
+  status      String   @default("PENDING")
+  realizedPnl Decimal? @db.Decimal(18, 8)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("orders")
+}
+
+model Position {
+  id          String   @id @default(cuid())
+  market      String
+  size        Decimal  @db.Decimal(18, 8)
+  entryPrice  Decimal? @db.Decimal(18, 8)
+  pnl         Decimal? @db.Decimal(18, 8)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@map("positions")
+}
+
+model CalibrationRun {
+  id          String    @id @default(cuid())
+  status      String    @default("STARTED")
+  startedAt   DateTime
+  finishedAt  DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@map("calibration_runs")
+}
+
+model ExecutionControl {
+  key         String   @id
+  killSwitch  Boolean  @default(false)
+  reason      String?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@map("execution_controls")
+}

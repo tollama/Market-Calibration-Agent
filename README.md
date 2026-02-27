@@ -72,6 +72,17 @@ See [dependency lockfile strategy](docs/dependency-lockfile-strategy.md).
 API_BASE=http://127.0.0.1:8100 TSFM_FORECAST_API_TOKEN=<real-secret> scripts/rollout_hardening_gate.sh
 ```
 
+### KPI 계약 N-run 리포트 (Go/No-Go)
+
+```bash
+python3 scripts/kpi_contract_report.py \
+  --input scripts/examples/kpi_runs_sample.jsonl \
+  --n 5 \
+  --stage canary \
+  --thresholds configs/kpi_contract_thresholds.json \
+  --output-json artifacts/ops/kpi_contract_report_sample.json
+```
+
 ### 사전조건/실행/검증/실패시 대응
 
 - **사전조건**: Python 3.11+, `requirements.lock` 동기화 상태 점검, 실운영 토큰 미설정/placeholder 확인.
@@ -99,3 +110,4 @@ API_BASE=http://127.0.0.1:8100 TSFM_FORECAST_API_TOKEN=<real-secret> scripts/rol
 - [Conformal calibration ops guide](docs/conformal-ops.md) - rolling updater, state persistence, manual/cron runbook
 - [Label resolver defaults and precedence](docs/label-resolver-defaults.md)
 - [Single App 운영 Runbook](docs/ops/single-app-ops-runbook.md) - ADMIN 토큰 로테이션, compose 운영 기준, dryRun=false 안전 카나리
+- [KPI 계약(Go/No-Go)](docs/ops/kpi-contract-go-nogo.md) - Brier/ECE/realized slippage/execution fail rate 기준 + N-run 자동 판정 리포트

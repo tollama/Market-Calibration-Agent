@@ -3,7 +3,10 @@ export type OpsEventName =
   | 'worker_failed'
   | 'retry_exhausted'
   | 'kill_switch_on'
-  | 'kill_switch_off';
+  | 'kill_switch_off'
+  | 'execution_order_created'
+  | 'order_status_transition_blocked'
+  | 'order_status_transition_error';
 
 export type OpsEventSeverity = 'info' | 'warning' | 'critical';
 

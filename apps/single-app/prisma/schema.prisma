@@ -34,12 +34,13 @@ model Position {
 }
 
 model CalibrationRun {
-  id          String    @id @default(cuid())
-  status      String    @default("STARTED")
-  startedAt   DateTime
-  finishedAt  DateTime?
-  notes       String?
-  createdAt   DateTime  @default(now())
+  id             String    @id @default(cuid())
+  status         String    @default("STARTED")
+  startedAt      DateTime
+  finishedAt     DateTime?
+  notes          String?
+  idempotencyKey String?   @unique
+  createdAt      DateTime  @default(now())
 
   @@map("calibration_runs")
 }

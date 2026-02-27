@@ -11,12 +11,17 @@
     "dev:worker": "tsx watch src/worker/index.ts",
     "queue:smoke": "tsx src/queue/smoke.ts",
     "typecheck": "tsc --noEmit",
+    "test:order-state": "tsx --test src/lib/order-status.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "smoke:ci": "bash scripts/ci_smoke.sh"
+    "smoke:ci": "bash scripts/ci_smoke.sh",
+    "test:auto-killswitch": "tsx --test src/lib/auto-killswitch.test.ts",
+    "test:e2e:order-sm": "tsx --test src/lib/order-state-machine.e2e.test.ts",
+    "test:e2e:order-sm:local": "bash scripts/test_order_state_machine_e2e.sh",
+    "test:advisory-policy": "tsx --test src/lib/advisory-policy.test.ts app/api/markets/route.test.ts app/api/execution/start/route.test.ts app/api/health/route.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

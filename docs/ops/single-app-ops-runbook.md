@@ -2,12 +2,21 @@
 
 `apps/single-app` 운영 시 반복되는 3개 작업(관리자 토큰 운영화, compose 경고 제거 기준, dryRun=false 카나리)을 표준화한 문서입니다.
 
+> Advisory-only 정책: 본 시스템은 정보 제공 전용이며 투자 권유/거래 집행 서비스를 제공하지 않습니다. 본 문서는 법률·세무·회계 자문이 아니며, 규제 준수와 실제 투자/거래 판단 책임은 사용자/운영 주체에 있습니다.
+
 ## 0) 대상
 
 - 대상 앱: `apps/single-app`
 - 중요 엔드포인트:
   - `POST /api/execution/start` (관리자 인증 필요)
   - `POST /api/execution/stop` (관리자 인증 필요)
+
+### 주문 상태머신 runtime 연결 현황
+
+- `POST /api/execution/start`가 실행 요청 수락 시 `PENDING` 주문을 1건 생성하고 `orderId`를 worker payload에 포함합니다.
+- worker 성공 시 `transitionOrderStatus(orderId, 'FILLED')` 경로를 사용합니다.
+- worker 실패 시 `transitionOrderStatus(orderId, 'FAILED')` 경로를 사용합니다.
+- 불법 전이/동시성 충돌/주문 미존재는 ops-event(`order_status_transition_blocked` / `order_status_transition_error`)로 기록되며, 기존 전이 에러 계약은 유지됩니다.
 
 ---
 
@@ -213,6 +222,12 @@ curl -X POST http://127.0.0.1:3000/api/execution/stop \
 - DB run 상태가 `FAILED`로 종료되거나 예상치 못한 에러 로그 다수 발생
 - no-op 엔트리포인트 미적용 징후(실주문/외부 주문 호출 흔적)
 - 운영자 판단으로 안전성 불확실
+
+또한 auto kill-switch가 기본 활성화되어 있어, 다음 조건 충족 시 시스템이 자동으로 ON 됩니다.
+
+- 연속 실패 `AUTO_KILL_SWITCH_CONSECUTIVE_FAILURES` 초과(기본 3)
+- 일손실 `AUTO_KILL_SWITCH_MAX_DAILY_LOSS` 초과(기본 500000)
+- 실행 지연 급증/초과 (`AUTO_KILL_SWITCH_LATENCY_THRESHOLD_MS`, `AUTO_KILL_SWITCH_LATENCY_SPIKE_*`)
 
 즉시 차단 명령:
 

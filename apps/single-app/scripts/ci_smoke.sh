@@ -214,17 +214,48 @@ else
 fi
 rm -f "$HTTP_BODY_FILE"
 
-# c) start with token => 202
-http_call POST "$START_URL" '{"mode":"paper","dryRun":true,"maxPosition":1000}' "$ADMIN_API_TOKEN"
+# c) idempotency: same request twice => single run only
+IDEMPOTENCY_KEY="ci-smoke-$(date +%s)-$RANDOM"
+REQUEST_BODY="{\"mode\":\"paper\",\"dryRun\":true,\"maxPosition\":1000,\"idempotencyKey\":\"${IDEMPOTENCY_KEY}\"}"
+
+http_call POST "$START_URL" "$REQUEST_BODY" "$ADMIN_API_TOKEN"
 if [[ "$HTTP_CODE" == "202" ]]; then
-  pass "c) start with token => 202"
+  pass "c-1) first start with idempotency key => 202"
 else
-  fail "c) expected 202, got $HTTP_CODE"
+  fail "c-1) expected 202, got $HTTP_CODE"
   cat "$HTTP_BODY_FILE"
   rm -f "$HTTP_BODY_FILE"
   exit 1
 fi
+FIRST_RUN_ID="$(node -e 'const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(d.runId||"")' "$HTTP_BODY_FILE")"
 rm -f "$HTTP_BODY_FILE"
+
+http_call POST "$START_URL" "$REQUEST_BODY" "$ADMIN_API_TOKEN"
+if [[ "$HTTP_CODE" == "200" ]] && json_eval "$HTTP_BODY_FILE" 'data.ok === true && data.replayed === true'; then
+  pass "c-2) duplicate start => 200 replayed"
+else
+  fail "c-2) expected 200 replayed, got $HTTP_CODE"
+  cat "$HTTP_BODY_FILE"
+  rm -f "$HTTP_BODY_FILE"
+  exit 1
+fi
+SECOND_RUN_ID="$(node -e 'const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(d.runId||"")' "$HTTP_BODY_FILE")"
+rm -f "$HTTP_BODY_FILE"
+
+if [[ -n "$FIRST_RUN_ID" && "$FIRST_RUN_ID" == "$SECOND_RUN_ID" ]]; then
+  pass "c-3) replay runId is identical"
+else
+  fail "c-3) replay runId mismatch (first=$FIRST_RUN_ID second=$SECOND_RUN_ID)"
+  exit 1
+fi
+
+IDEMPOTENCY_ROW_COUNT="$(docker exec single-app-postgres psql -U postgres -d market_calibration -t -A -c "SELECT COUNT(*) FROM calibration_runs WHERE \"idempotencyKey\"='${IDEMPOTENCY_KEY}';" | tr -d '[:space:]')"
+if [[ "$IDEMPOTENCY_ROW_COUNT" == "1" ]]; then
+  pass "c-4) DB row count by idempotency key == 1"
+else
+  fail "c-4) expected 1 row by idempotency key, got ${IDEMPOTENCY_ROW_COUNT:-empty}"
+  exit 1
+fi
 
 # d) stop enabled=true => 200
 http_call POST "$STOP_URL" '{"enabled":true,"reason":"ci smoke stop on"}' "$ADMIN_API_TOKEN"

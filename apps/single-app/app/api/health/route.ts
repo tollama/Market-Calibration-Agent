@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { withAdvisory } from '../../../src/lib/advisory-policy';
 import { prisma } from '../../../src/lib/prisma';
 
 export async function GET() {
@@ -18,7 +19,7 @@ export async function GET() {
     console.error('[health] database check failed', error);
 
     return NextResponse.json(
-      {
+      withAdvisory('/api/health', {
         ok: false,
         service: 'single-app',
         now: new Date().toISOString(),
@@ -26,7 +27,7 @@ export async function GET() {
           ok: false,
           error: 'DB connection failed'
         }
-      },
+      }),
       { status: 503 }
     );
   }

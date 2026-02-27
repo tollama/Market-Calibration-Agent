@@ -7,6 +7,8 @@ export interface ExecutionJobPayload {
   dryRun: boolean;
   maxPosition: number;
   notes?: string;
+  idempotencyKey?: string;
+  orderId?: string;
 }
 
 export interface ExecutionStartRequest {
@@ -14,4 +16,5 @@ export interface ExecutionStartRequest {
   dryRun?: boolean;
   maxPosition?: number;
   notes?: string;
+  idempotencyKey?: string;
 }

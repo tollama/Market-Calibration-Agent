@@ -7,8 +7,11 @@ import { promisify } from 'node:util';
 import { QueueEvents, Worker } from 'bullmq';
 import { getKillSwitchState, refreshKillSwitchState } from '../lib/kill-switch';
 import { emitOpsEvent } from '../lib/ops-events';
+import { executionOrderLifecycle } from '../lib/execution-order-lifecycle';
 import { prisma } from '../lib/prisma';
-import { assertRiskGuardsOrThrow, RiskGuardError } from '../lib/risk-guard';
+import { assertRiskGuardsOrThrow, evaluateRiskGuards, RiskGuardError } from '../lib/risk-guard';
+import { recordExecutionFailure, recordExecutionSuccess } from '../lib/auto-killswitch';
+import { isExecutionApiEnabled } from '../lib/advisory-policy';
 import { EXECUTION_QUEUE_NAME, executionJobDefaults } from '../queue/executionQueue';
 import { getRedisConnection } from '../queue/config';
 import type { ExecutionJobPayload } from '../queue/types';
@@ -218,7 +221,7 @@ print(json.dumps(result))
   ].join(' | ');
 }
 
-async function markRunFailed(runId: string, error: unknown): Promise<void> {
+async function markRunFailed(runId: string, error: unknown, orderId?: string): Promise<void> {
   const reason = error instanceof Error ? error.message : 'Unknown error';
   const riskSuffix =
     error instanceof RiskGuardError
@@ -237,6 +240,11 @@ async function markRunFailed(runId: string, error: unknown): Promise<void> {
     .catch((err) => {
       console.error(`[worker] failed to mark run failed runId=${runId}`, err);
     });
+
+  await executionOrderLifecycle.markFailed({
+    orderId,
+    runId,
+  });
 }
 
 const worker = new Worker<ExecutionJobPayload>(
@@ -244,6 +252,11 @@ const worker = new Worker<ExecutionJobPayload>(
   async (job) => {
     const payload = job.data;
     const requestedAt = payload.requestedAt;
+    const startedAtMs = Date.now();
+
+    if (!isExecutionApiEnabled()) {
+      throw new Error('Execution is disabled by policy (EXECUTION_API_ENABLED=false)');
+    }
 
     const killSwitch = await refreshKillSwitchState().catch(() => getKillSwitchState());
     if (killSwitch.enabled) {
@@ -260,7 +273,21 @@ const worker = new Worker<ExecutionJobPayload>(
       throw new Error(`kill-switch is ON: ${killSwitch.reason ?? 'no reason provided'}`);
     }
 
-    await assertRiskGuardsOrThrow('worker');
+    const riskSnapshot = await evaluateRiskGuards();
+    try {
+      await assertRiskGuardsOrThrow('worker');
+    } catch (error) {
+      if (error instanceof RiskGuardError && error.code === 'RISK_LIMIT_EXCEEDED') {
+        await recordExecutionFailure({
+          runId: payload.runId,
+          jobId: job.id ? String(job.id) : undefined,
+          reason: error.message,
+          currentLossAbs: riskSnapshot.dailyLoss.currentLossAbs,
+          latencyMs: Date.now() - startedAtMs,
+        });
+      }
+      throw error;
+    }
 
     await prisma.calibrationRun.upsert({
       where: { id: payload.runId },
@@ -319,6 +346,19 @@ const worker = new Worker<ExecutionJobPayload>(
       },
     });
 
+    await executionOrderLifecycle.markFilled({
+      orderId: payload.orderId,
+      runId: payload.runId,
+    });
+
+    const latestRiskSnapshot = await evaluateRiskGuards().catch(() => null);
+    await recordExecutionSuccess({
+      runId: payload.runId,
+      jobId: job.id ? String(job.id) : undefined,
+      latencyMs: Date.now() - startedAtMs,
+      currentLossAbs: latestRiskSnapshot?.dailyLoss.currentLossAbs,
+    });
+
     return { calibrationRunId: payload.runId, status: resultStatus };
   },
   {
@@ -356,6 +396,17 @@ worker.on('failed', (job, err) => {
     },
   });
 
+  void evaluateRiskGuards()
+    .catch(() => null)
+    .then((snapshot) =>
+      recordExecutionFailure({
+        runId,
+        jobId,
+        reason,
+        currentLossAbs: snapshot?.dailyLoss.currentLossAbs,
+      })
+    );
+
   const configuredAttempts =
     typeof job?.opts?.attempts === 'number'
       ? job.opts.attempts
@@ -378,7 +429,7 @@ worker.on('failed', (job, err) => {
   }
 
   if (runId) {
-    void markRunFailed(runId, err);
+    void markRunFailed(runId, err, job?.data?.orderId);
   }
 });
 

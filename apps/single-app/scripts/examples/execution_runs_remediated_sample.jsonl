@@ -1,0 +1,5 @@
+{"run_id":"canary-2026-02-27T11:00Z","ended_at":"2026-02-27T11:00:00Z","realized_slippage_bps":9.8,"execution_fail_rate":0.008}
+{"run_id":"canary-2026-02-27T12:00Z","ended_at":"2026-02-27T12:00:00Z","realized_slippage_bps":10.2,"execution_fail_rate":0.010}
+{"run_id":"canary-2026-02-27T13:00Z","ended_at":"2026-02-27T13:00:00Z","realized_slippage_bps":11.4,"execution_fail_rate":0.012}
+{"run_id":"canary-2026-02-27T14:00Z","ended_at":"2026-02-27T14:00:00Z","realized_slippage_bps":14.2,"execution_fail_rate":0.015}
+{"run_id":"canary-2026-02-27T15:00Z","ended_at":"2026-02-27T15:00:00Z","realized_slippage_bps":12.3,"execution_fail_rate":0.013}

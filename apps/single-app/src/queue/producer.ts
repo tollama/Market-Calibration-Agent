@@ -1,10 +1,16 @@
 import { getKillSwitchState } from '../lib/kill-switch';
 import { emitOpsEvent } from '../lib/ops-events';
-import { assertRiskGuardsOrThrow } from '../lib/risk-guard';
+import { assertRiskGuardsOrThrow, evaluateRiskGuards, RiskGuardError } from '../lib/risk-guard';
+import { recordExecutionFailure } from '../lib/auto-killswitch';
+import { isExecutionApiEnabled } from '../lib/advisory-policy';
 import { createExecutionQueue } from './executionQueue';
 import type { ExecutionJobPayload } from './types';
 
 export async function enqueueExecutionStart(payload: ExecutionJobPayload) {
+  if (!isExecutionApiEnabled()) {
+    throw new Error('Execution is disabled by policy (EXECUTION_API_ENABLED=false)');
+  }
+
   const killSwitch = await getKillSwitchState();
   if (killSwitch.enabled) {
     await emitOpsEvent({
@@ -19,16 +25,34 @@ export async function enqueueExecutionStart(payload: ExecutionJobPayload) {
 
     throw new Error(`Kill-switch is ON. enqueue blocked (${killSwitch.reason ?? 'no reason'})`);
   }
-  await assertRiskGuardsOrThrow('producer');
+  const riskSnapshot = await evaluateRiskGuards();
+  try {
+    await assertRiskGuardsOrThrow('producer');
+  } catch (error) {
+    if (error instanceof RiskGuardError && error.code === 'RISK_LIMIT_EXCEEDED') {
+      await recordExecutionFailure({
+        runId: payload.runId,
+        reason: error.message,
+        currentLossAbs: riskSnapshot.dailyLoss.currentLossAbs,
+      });
+    }
+    throw error;
+  }
 
   const queue = createExecutionQueue();
   try {
-    const job = await queue.add('execution.start', payload);
+    const job = await queue.add('execution.start', payload, {
+      ...(payload.idempotencyKey
+        ? {
+            jobId: `execution:start:${payload.idempotencyKey}`,
+          }
+        : {}),
+    });
 
     return {
       runId: payload.runId,
       jobId: String(job.id),
-      queueName: queue.name
+      queueName: queue.name,
     };
   } finally {
     await queue.close();

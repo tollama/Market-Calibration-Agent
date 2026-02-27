@@ -26,6 +26,11 @@ calibration:
     rolling_window_samples: 2000
     min_samples: 100
 
+features:
+  liquidity_thresholds:
+    low: 10000
+    high: 100000
+
 trust_score:
   weights:
     liquidity_depth: 0.35

@@ -38,36 +38,7 @@ def test_stage_build_features_builds_expected_feature_columns() -> None:
     assert DEFAULT_LIQUIDITY_LOW == 10_000.0
     assert DEFAULT_LIQUIDITY_HIGH == 100_000.0
 
-    context = _Context(
-        state={
-            "cutoff_snapshots": [
-                {
-                    "market_id": "mkt-a",
-                    "ts": "2026-02-20T00:00:00Z",
-                    "p_yes": 0.50,
-                    "volume_24h": 9_000.0,
-                    "open_interest": 8_000.0,
-                    "end_ts": "2026-02-21T00:00:00Z",
-                },
-                {
-                    "market_id": "mkt-a",
-                    "ts": "2026-02-20T00:10:00Z",
-                    "p_yes": 0.55,
-                    "volume_24h": 12_000.0,
-                    "open_interest": 15_000.0,
-                    "end_ts": "2026-02-21T00:00:00Z",
-                },
-                {
-                    "market_id": "mkt-b",
-                    "ts": "2026-02-20T00:00:00Z",
-                    "p_yes": 0.40,
-                    "volume_24h": 130_000.0,
-                    "open_interest": 110_000.0,
-                    "end_ts": "2026-02-21T00:00:00Z",
-                },
-            ]
-        }
-    )
+    context = _Context(state={"cutoff_snapshots": _default_snapshot_rows()})
 
     summary = stage_build_features(context)
     feature_frame = context.state["feature_frame"]
@@ -84,3 +55,109 @@ def test_stage_build_features_builds_expected_feature_columns() -> None:
         "liquidity_bucket",
     ):
         assert required_column in feature_frame.columns
+
+    assert feature_frame["liquidity_bucket"].tolist() == ["LOW", "MID", "HIGH"]
+
+
+def test_stage_build_features_applies_custom_thresholds_from_config_file(tmp_path: Path) -> None:
+    config_path = tmp_path / "features.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "features:",
+                "  liquidity_thresholds:",
+                "    low: 20000",
+                "    high: 120000",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    context = _Context(
+        state={
+            "cutoff_snapshots": _default_snapshot_rows(),
+            "feature_config_path": str(config_path),
+        }
+    )
+
+    stage_build_features(context)
+
+    feature_frame = context.state["feature_frame"]
+    assert feature_frame["liquidity_bucket"].tolist() == ["LOW", "LOW", "HIGH"]
+
+
+def test_stage_build_features_boundary_values_follow_low_inclusive_high_inclusive() -> None:
+    context = _Context(
+        state={
+            "cutoff_snapshots": [
+                {
+                    "market_id": "mkt-a",
+                    "ts": "2026-02-20T00:00:00Z",
+                    "p_yes": 0.50,
+                    "volume_24h": 49.0,
+                    "open_interest": 49.0,
+                    "end_ts": "2026-02-21T00:00:00Z",
+                },
+                {
+                    "market_id": "mkt-a",
+                    "ts": "2026-02-20T00:10:00Z",
+                    "p_yes": 0.55,
+                    "volume_24h": 50.0,
+                    "open_interest": 50.0,
+                    "end_ts": "2026-02-21T00:00:00Z",
+                },
+                {
+                    "market_id": "mkt-a",
+                    "ts": "2026-02-20T00:20:00Z",
+                    "p_yes": 0.56,
+                    "volume_24h": 99.0,
+                    "open_interest": 99.0,
+                    "end_ts": "2026-02-21T00:00:00Z",
+                },
+                {
+                    "market_id": "mkt-a",
+                    "ts": "2026-02-20T00:30:00Z",
+                    "p_yes": 0.57,
+                    "volume_24h": 100.0,
+                    "open_interest": 100.0,
+                    "end_ts": "2026-02-21T00:00:00Z",
+                },
+            ],
+            "liquidity_low": 50.0,
+            "liquidity_high": 100.0,
+        }
+    )
+
+    stage_build_features(context)
+
+    feature_frame = context.state["feature_frame"]
+    assert feature_frame["liquidity_bucket"].tolist() == ["LOW", "MID", "MID", "HIGH"]
+
+
+def _default_snapshot_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "market_id": "mkt-a",
+            "ts": "2026-02-20T00:00:00Z",
+            "p_yes": 0.50,
+            "volume_24h": 9_000.0,
+            "open_interest": 8_000.0,
+            "end_ts": "2026-02-21T00:00:00Z",
+        },
+        {
+            "market_id": "mkt-a",
+            "ts": "2026-02-20T00:10:00Z",
+            "p_yes": 0.55,
+            "volume_24h": 12_000.0,
+            "open_interest": 15_000.0,
+            "end_ts": "2026-02-21T00:00:00Z",
+        },
+        {
+            "market_id": "mkt-b",
+            "ts": "2026-02-20T00:00:00Z",
+            "p_yes": 0.40,
+            "volume_24h": 130_000.0,
+            "open_interest": 110_000.0,
+            "end_ts": "2026-02-21T00:00:00Z",
+        },
+    ]

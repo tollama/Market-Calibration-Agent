@@ -309,6 +309,8 @@ npm run smoke:ci
 
 상세 절차는 루트 문서 [`docs/ops/single-app-ops-runbook.md`](../../docs/ops/single-app-ops-runbook.md)를 기준으로 운영합니다.
 
+피처 이관 표준 템플릿은 [`docs/ops/feature-migration-template.md`](../../docs/ops/feature-migration-template.md)를 사용합니다.
+
 핵심 요약:
 
 1. **Compose 경고 제거 기준**: `docker-compose.yml`에 `version:` 키를 두지 않습니다.

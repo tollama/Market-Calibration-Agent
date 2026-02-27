@@ -88,7 +88,8 @@ This document explains how the main modules are implemented and how runtime beha
   - `volume_velocity`
   - `oi_change`
   - `tte_seconds` (from `tte_seconds` or end-time columns)
-  - `liquidity_bucket` (`LOW/MID/HIGH` thresholds configurable)
+  - `liquidity_bucket` (`base_liquidity=max(volume_24h,open_interest)`에 threshold 적용; 기본 `10k/100k`, `configs/default.yaml` 또는 `MCA_LIQUIDITY_LOW/HIGH`로 조정 가능)
+  - `liquidity_bucket_id` (`LOW/MID/HIGH` → `0/1/2`)
 
 ### Calibration metrics (`calibration/metrics.py`)
 

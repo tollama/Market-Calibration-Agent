@@ -14,6 +14,7 @@ _FEATURE_COLUMNS = [
     "oi_change",
     "tte_seconds",
     "liquidity_bucket",
+    "liquidity_bucket_id",
 ]
 
 
@@ -96,6 +97,7 @@ def build_features(
         low=liquidity_low,
         high=liquidity_high,
     )
+    frame["liquidity_bucket_id"] = _build_liquidity_bucket_id(frame["liquidity_bucket"])
 
     if high_freq_agg is not None:
         frame = _overlay_high_frequency_features(
@@ -162,6 +164,12 @@ def _build_liquidity_bucket(
     provided = frame["liquidity_bucket"].astype("string").str.upper()
     normalized = provided.where(provided.isin({"LOW", "MID", "HIGH"}))
     return normalized.fillna(computed).astype(str)
+
+
+def _build_liquidity_bucket_id(liquidity_bucket: pd.Series) -> pd.Series:
+    mapping = {"LOW": 0, "MID": 1, "HIGH": 2}
+    normalized = liquidity_bucket.astype("string").str.upper()
+    return normalized.map(mapping).fillna(1).astype(int)
 
 
 def _overlay_high_frequency_features(

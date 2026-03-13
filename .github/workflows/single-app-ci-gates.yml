@@ -1,0 +1,67 @@
+name: Single App CI Gates
+
+on:
+  pull_request:
+    paths:
+      - "apps/single-app/**"
+      - ".github/workflows/single-app-ci-gates.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/single-app/**"
+      - ".github/workflows/single-app-ci-gates.yml"
+  workflow_dispatch:
+
+jobs:
+  single-app-ci-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/single-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/single-app/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: smoke:ci
+        run: npm run smoke:ci
+
+      - name: test:e2e:order-sm
+        run: npm run test:e2e:order-sm
+
+      - name: p1_revalidate --auto
+        run: |
+          bash scripts/p1_revalidate.sh --auto \
+            --execution-source scripts/examples/execution_runs_remediated_sample.jsonl \
+            --metrics-source scripts/examples/metrics_runs_remediated_sample.jsonl \
+            --auto-kpi-output ../../artifacts/ops/kpi_runs_auto_ci.jsonl \
+            ../../artifacts/ops/kpi_contract_report_ci.json
+
+      - name: Upload CI gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: single-app-ci-gate-artifacts
+          path: |
+            artifacts/ops/kpi_runs_auto_ci.jsonl
+            artifacts/ops/kpi_contract_report_ci.json
+            apps/single-app/.ci_smoke.dev.log
+
+      - name: Docker compose down
+        if: always()
+        run: docker compose down -v

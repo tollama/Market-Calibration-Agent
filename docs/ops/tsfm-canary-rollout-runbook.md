@@ -2,10 +2,13 @@
 
 This runbook operationalizes PRD2 load-test rollout gates and rollback policy.
 
+> Advisory-only 정책: 본 시스템/문서는 정보 제공 및 운영 안정성 검증 목적이며, 투자 권유 또는 법률 자문이 아닙니다. 실제 투자/거래 판단 및 규제 준수 책임은 사용자/운영 주체에 있습니다.
+
 Source of truth:
 - `.openclaw-plans/PRD2_LOADTEST_SPEC.md` sections 6, 7, 8
 - `monitoring/prometheus/tsfm_canary_alerts.rules.yaml`
 - `scripts/evaluate_tsfm_canary_gate.py`
+- `docs/ops/kpi-contract-go-nogo.md`
 
 ## 1) Promotion gates
 
@@ -101,6 +104,25 @@ Expected output fields:
 ```
 
 All arrays must be aligned by 5-minute window.
+
+## 6.5) KPI 계약 N-run 점검 (Go/No-Go)
+
+아래 명령으로 최근 N-run KPI를 점검한다.
+
+```bash
+python3 scripts/kpi_contract_report.py \
+  --input <run_kpi_jsonl_or_json> \
+  --n 10 \
+  --stage canary \
+  --thresholds configs/kpi_contract_thresholds.json \
+  --output-json artifacts/ops/kpi_contract_report_canary.json
+```
+
+판정 기준:
+- `overall=GO`: 최근 N-run 모두 임계값 내
+- `overall=NO_GO`: 1개 이상 run에서 임계값 초과 (`WARN`)
+
+세부 기준/수집 위치는 `docs/ops/kpi-contract-go-nogo.md`를 따른다.
 
 ## 7) Post-checkpoint hardening gate review
 

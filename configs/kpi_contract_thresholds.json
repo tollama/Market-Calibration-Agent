@@ -1,0 +1,18 @@
+{
+  "description": "KPI contract defaults (shared by canary/prod)",
+  "version": "2026-02-27",
+  "stages": {
+    "common": {
+      "brier_max": 0.20,
+      "ece_max": 0.08,
+      "realized_slippage_bps_max": 15.0,
+      "execution_fail_rate_max": 0.02
+    },
+    "canary": {
+      "inherit": "common"
+    },
+    "prod": {
+      "inherit": "common"
+    }
+  }
+}

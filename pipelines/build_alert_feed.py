@@ -26,14 +26,28 @@ _STRICT_GATE_NESTED_KEYS: tuple[str, ...] = (
 )
 
 
+_DAMPEN_MAP: dict[str, str] = {
+    "HIGH": "MED",
+    "MED": "FYI",
+}
+
+
 def build_alert_feed_rows(
     rows: Sequence[Mapping[str, object]],
     *,
     thresholds: AlertThresholdConfig | None = None,
     include_fyi: bool = False,
     min_trust_score: float | None = None,
+    dampen_low_confidence: bool = True,
 ) -> list[dict[str, object]]:
-    """Build alert feed rows, excluding FYI alerts unless include_fyi=True."""
+    """Build alert feed rows, excluding FYI alerts unless include_fyi=True.
+
+    When *dampen_low_confidence* is ``True`` (default), rows that carry
+    ``low_confidence=True`` will have their severity downgraded one level
+    (HIGH→MED, MED→FYI).  The ``evidence`` dict for dampened rows receives a
+    ``dampened_by_low_confidence: true`` flag so that consumers can trace the
+    decision.
+    """
     alert_rows: list[dict[str, object]] = []
     normalized_min_trust_score = (
         float(min_trust_score) if min_trust_score is not None else None
@@ -75,6 +89,15 @@ def build_alert_feed_rows(
         strict_gate_passed = _resolve_strict_gate_passed(row=row, evaluation=evaluation)
         if severity in {"HIGH", "MED"} and strict_gate_passed is False:
             severity = "FYI"
+
+        # Low-confidence dampening: downgrade severity for thin/unreliable markets
+        dampened = False
+        if dampen_low_confidence and row.get("low_confidence") is True:
+            dampened_severity = _DAMPEN_MAP.get(severity)
+            if dampened_severity is not None:
+                severity = dampened_severity
+                dampened = True
+
         if severity not in _SEVERITY_PRIORITY:
             continue
         if severity == "FYI" and not include_fyi:
@@ -88,6 +111,8 @@ def build_alert_feed_rows(
             evidence["ambiguity_score"] = ambiguity_score
         if volume_velocity is not None:
             evidence["volume_velocity"] = volume_velocity
+        if dampened:
+            evidence["dampened_by_low_confidence"] = True
 
         alert_rows.append(
             {

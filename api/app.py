@@ -40,6 +40,7 @@ from .dependencies import LocalDerivedStore, get_derived_store
 from .schemas import (
     AlertItem,
     AlertsResponse,
+    CalibrationQualityResponse,
     MarketComparisonRequest,
     MarketComparisonResponse,
     MarketDetailResponse,
@@ -444,6 +445,98 @@ def get_postmortem(
         content=content,
         source_path=str(source_path),
         source="artifact",
+    )
+
+
+@app.get("/metrics/calibration_quality", response_model=CalibrationQualityResponse)
+def get_calibration_quality(
+    window: str = Query(default="90d"),
+    store: LocalDerivedStore = Depends(get_derived_store),
+) -> CalibrationQualityResponse:
+    """Return aggregated calibration quality metrics for operational monitoring.
+
+    Combines global calibration scores (Brier, log-loss, ECE), conformal
+    coverage and width, drift detection status, and low-confidence market
+    counts into a single response.
+    """
+    try:
+        window = _validate_scoreboard_window(window)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    records = store.load_scoreboard(window=window)
+    now = datetime.now(timezone.utc)
+
+    if not records:
+        return CalibrationQualityResponse(
+            total_market_count=0,
+            low_confidence_market_count=0,
+            as_of=now,
+        )
+
+    # Aggregate calibration metrics across all markets
+    brier_values: list[float] = []
+    log_loss_values: list[float] = []
+    ece_values: list[float] = []
+    low_confidence_count = 0
+    total_count = len(records)
+
+    for record in records:
+        b = record.get("brier")
+        if isinstance(b, (int, float)):
+            brier_values.append(float(b))
+        ll = record.get("log_loss") or record.get("logloss")
+        if isinstance(ll, (int, float)):
+            log_loss_values.append(float(ll))
+        e = record.get("ece")
+        if isinstance(e, (int, float)):
+            ece_values.append(float(e))
+        if record.get("low_confidence") is True:
+            low_confidence_count += 1
+
+    avg_brier = sum(brier_values) / len(brier_values) if brier_values else None
+    avg_log_loss = sum(log_loss_values) / len(log_loss_values) if log_loss_values else None
+    avg_ece = sum(ece_values) / len(ece_values) if ece_values else None
+
+    # Attempt to load drift and conformal state from store (best-effort)
+    drift_detected: bool | None = None
+    base_rate_swing: float | None = None
+    conformal_coverage: float | None = None
+    conformal_width: float | None = None
+
+    try:
+        drift_state = store.load_drift_state() if hasattr(store, "load_drift_state") else None
+        if isinstance(drift_state, Mapping):
+            drift_detected = bool(drift_state.get("drift_detected"))
+            swing = drift_state.get("base_rate_swing")
+            if isinstance(swing, (int, float)):
+                base_rate_swing = float(swing)
+    except Exception:  # pragma: no cover - best effort
+        pass
+
+    try:
+        conformal_state = store.load_conformal_state() if hasattr(store, "load_conformal_state") else None
+        if isinstance(conformal_state, Mapping):
+            cov = conformal_state.get("post_coverage") or conformal_state.get("coverage")
+            if isinstance(cov, (int, float)):
+                conformal_coverage = float(cov)
+            width = conformal_state.get("width_scale") or conformal_state.get("width")
+            if isinstance(width, (int, float)):
+                conformal_width = float(width)
+    except Exception:  # pragma: no cover - best effort
+        pass
+
+    return CalibrationQualityResponse(
+        brier=avg_brier,
+        log_loss=avg_log_loss,
+        ece=avg_ece,
+        conformal_coverage=conformal_coverage,
+        conformal_width=conformal_width,
+        drift_detected=drift_detected,
+        base_rate_swing=base_rate_swing,
+        low_confidence_market_count=low_confidence_count,
+        total_market_count=total_count,
+        as_of=now,
     )
 
 

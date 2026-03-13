@@ -148,6 +148,23 @@ class TSFMForecastResponse(BaseModel):
     conformal_last_step: Optional[Dict[str, Any]] = None
 
 
+class CalibrationQualityResponse(BaseModel):
+    """Calibration quality summary for operational monitoring."""
+
+    brier: Optional[float] = None
+    log_loss: Optional[float] = None
+    ece: Optional[float] = None
+    slope: Optional[float] = None
+    intercept: Optional[float] = None
+    conformal_coverage: Optional[float] = None
+    conformal_width: Optional[float] = None
+    drift_detected: Optional[bool] = None
+    base_rate_swing: Optional[float] = None
+    low_confidence_market_count: int = 0
+    total_market_count: int = 0
+    as_of: Optional[datetime] = None
+
+
 class MarketComparisonRequest(BaseModel):
     forecast: TSFMForecastRequest
     baseline_liquidity_bucket: str = "low"

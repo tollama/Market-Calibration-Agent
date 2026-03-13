@@ -85,11 +85,15 @@ def test_build_scoreboard_rows_computes_metrics_and_trust_score() -> None:
     assert mkt1["log_loss"] == pytest.approx(expected_mkt1_metrics["log_loss"], rel=0, abs=1e-12)
     assert mkt1["ece"] == pytest.approx(expected_mkt1_metrics["ece"], rel=0, abs=1e-12)
 
+    # Row 1 has explicit components; row 2 has none so derive_trust_components
+    # is called, which for liquidity_bucket="high" (no volume/oi) gives
+    # liquidity_depth=0.8, stability=0.5, question_quality=0.5,
+    # manipulation_suspect=0.0.
     mkt1_components = {
-        "liquidity_depth": (0.90 + 0.50) / 2.0,
+        "liquidity_depth": (0.90 + 0.80) / 2.0,
         "stability": (0.60 + 0.50) / 2.0,
         "question_quality": (0.80 + 0.50) / 2.0,
-        "manipulation_suspect": (0.10 + 0.50) / 2.0,
+        "manipulation_suspect": (0.10 + 0.00) / 2.0,
     }
     assert math.isclose(
         float(mkt1["trust_score"]),

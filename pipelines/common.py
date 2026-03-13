@@ -17,6 +17,8 @@ StageName = Literal[
     "cutoff",
     "features",
     "metrics",
+    "drift",
+    "conformal",
     "publish",
 ]
 StageStatus = Literal["success", "failed"]

@@ -1,0 +1,112 @@
+groups:
+  - name: calibration-quality-alerts
+    interval: 60s
+    rules:
+      # ---- Calibration Score Alerts ----
+
+      - alert: CalibrationBrierHigh
+        expr: calibration_brier_score > 0.25
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+          domain: calibration
+        annotations:
+          summary: "Calibration Brier score elevated"
+          description: >-
+            Average Brier score has been above 0.25 for 30 minutes,
+            indicating potential model miscalibration. Check base-rate
+            shifts or data pipeline issues.
+
+      - alert: CalibrationECEHigh
+        expr: calibration_ece > 0.10
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+          domain: calibration
+        annotations:
+          summary: "Calibration ECE elevated"
+          description: >-
+            Expected Calibration Error has exceeded 0.10 for 30 minutes.
+            Predictions are systematically over- or under-confident.
+
+      # ---- Conformal Coverage Alerts ----
+
+      - alert: ConformalCoverageLow
+        expr: calibration_conformal_coverage < 0.75
+        for: 1h
+        labels:
+          severity: warning
+          team: ml-platform
+          domain: calibration
+        annotations:
+          summary: "Conformal coverage below warning threshold"
+          description: >-
+            Conformal prediction interval coverage has been below 75%
+            for 1 hour (target: 80%). Consider running conformal
+            recalibration.
+
+      - alert: ConformalCoverageCritical
+        expr: calibration_conformal_coverage < 0.65
+        for: 30m
+        labels:
+          severity: critical
+          team: ml-platform
+          domain: calibration
+        annotations:
+          summary: "Conformal coverage critically low"
+          description: >-
+            Conformal coverage has dropped below 65% for 30 minutes.
+            Prediction intervals are unreliable. Trigger immediate
+            conformal recalibration and investigate data quality.
+
+      - alert: ConformalWidthExpansion
+        expr: calibration_conformal_width > 0.5
+        for: 1h
+        labels:
+          severity: warning
+          team: ml-platform
+          domain: calibration
+        annotations:
+          summary: "Conformal interval width expanding"
+          description: >-
+            Conformal width_scale has been above 0.5 for 1 hour,
+            indicating excessively wide prediction intervals. Check
+            for data distribution shifts or model degradation.
+
+      # ---- Drift Detection Alerts ----
+
+      - alert: CalibrationDriftDetected
+        expr: calibration_drift_detected == 1
+        for: 15m
+        labels:
+          severity: warning
+          team: ml-platform
+          domain: calibration
+        annotations:
+          summary: "Base-rate drift detected"
+          description: >-
+            The drift detection module has flagged a significant
+            base-rate shift (swing > 0.15 or increasing Brier trend).
+            Review recent market dynamics and consider adaptive
+            recalibration.
+
+      # ---- Operational Health ----
+
+      - alert: HighLowConfidenceMarketRatio
+        expr: >-
+          (calibration_low_confidence_markets / clamp_min(calibration_total_markets, 1))
+          > 0.3
+        for: 1h
+        labels:
+          severity: warning
+          team: ml-platform
+          domain: calibration
+        annotations:
+          summary: "Over 30% of markets are low-confidence"
+          description: >-
+            More than 30% of calibrated markets have insufficient
+            sample size (< 30 observations). Alert severities for
+            these markets are being dampened. Investigate whether
+            data ingestion volume has dropped.

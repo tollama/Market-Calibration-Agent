@@ -10,6 +10,7 @@ from typing import Any
 from calibration.labeling import to_binary_label_rows
 from calibration import metrics as calibration_metrics
 from calibration.metrics import assess_confidence, segment_metrics, summarize_metrics
+from calibration.trust_components import derive_trust_components
 from calibration.trust_score import compute_trust_components, compute_trust_score
 from storage.writers import ParquetWriter, normalize_dt
 
@@ -261,29 +262,23 @@ def _validate_required_row_keys(row: Mapping[str, object], *, idx: int) -> None:
 
 
 def _average_trust_components(rows: Sequence[Mapping[str, object]]) -> dict[str, float]:
-    summed = {
-        "liquidity_depth": 0.0,
-        "stability": 0.0,
-        "question_quality": 0.0,
-        "manipulation_suspect": 0.0,
-    }
+    _COMPONENT_KEYS = ("liquidity_depth", "stability", "question_quality", "manipulation_suspect")
+
+    summed = {key: 0.0 for key in _COMPONENT_KEYS}
 
     for row in rows:
-        components = compute_trust_components(
-            liquidity_depth=row.get(
-                "liquidity_depth",
-                _TRUST_COMPONENT_DEFAULTS["liquidity_depth"],
-            ),
-            stability=row.get("stability", _TRUST_COMPONENT_DEFAULTS["stability"]),
-            question_quality=row.get(
-                "question_quality",
-                _TRUST_COMPONENT_DEFAULTS["question_quality"],
-            ),
-            manipulation_suspect=row.get(
-                "manipulation_suspect",
-                _TRUST_COMPONENT_DEFAULTS["manipulation_suspect"],
-            ),
-        )
+        # If row has explicit component values, use them directly.
+        # Otherwise, derive from feature columns (vol, oi_change, etc.).
+        has_explicit = any(key in row for key in _COMPONENT_KEYS)
+        if has_explicit:
+            resolved = {
+                key: row.get(key, _TRUST_COMPONENT_DEFAULTS[key])
+                for key in _COMPONENT_KEYS
+            }
+        else:
+            resolved = derive_trust_components(row)
+
+        components = compute_trust_components(**resolved)
         for key in summed:
             summed[key] += components[key]
 

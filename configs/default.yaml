@@ -38,6 +38,11 @@ trust_score:
     stability: 0.25
     question_quality: 0.25
     manipulation_suspect: 0.15
+  component_derivation:
+    liquidity_high: 100000
+    volatility_ceiling: 0.3
+    oi_spike_threshold: 0.30
+    velocity_spike_threshold: 3.0
 
 api:
   tsfm_forecast:

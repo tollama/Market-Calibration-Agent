@@ -65,6 +65,36 @@ class TSFMMetricsEmitter:
     def observe_cycle_time_s(self, value_s: float, **labels: str) -> None:
         self.observe_hist("tsfm_cycle_time_seconds_bucket", value_s, self.cycle_buckets_s, **labels)
 
+    def update_calibration_gauges(
+        self,
+        *,
+        brier: float | None = None,
+        ece: float | None = None,
+        log_loss: float | None = None,
+        conformal_coverage: float | None = None,
+        conformal_width: float | None = None,
+        drift_detected: bool | None = None,
+        low_confidence_market_count: int | None = None,
+        total_market_count: int | None = None,
+    ) -> None:
+        """Bulk-update all calibration quality gauges."""
+        if brier is not None:
+            self.set_gauge("calibration_brier_score", brier)
+        if ece is not None:
+            self.set_gauge("calibration_ece", ece)
+        if log_loss is not None:
+            self.set_gauge("calibration_log_loss", log_loss)
+        if conformal_coverage is not None:
+            self.set_gauge("calibration_conformal_coverage", conformal_coverage)
+        if conformal_width is not None:
+            self.set_gauge("calibration_conformal_width", conformal_width)
+        if drift_detected is not None:
+            self.set_gauge("calibration_drift_detected", 1.0 if drift_detected else 0.0)
+        if low_confidence_market_count is not None:
+            self.set_gauge("calibration_low_confidence_markets", float(low_confidence_market_count))
+        if total_market_count is not None:
+            self.set_gauge("calibration_total_markets", float(total_market_count))
+
     def render_prometheus(self) -> str:
         lines: list[str] = []
         with self._lock:
@@ -78,6 +108,14 @@ class TSFMMetricsEmitter:
             lines.append("# TYPE tsfm_cycle_time_seconds_bucket histogram")
             lines.append("# TYPE tsfm_interval_width gauge")
             lines.append("# TYPE tsfm_target_coverage gauge")
+            lines.append("# TYPE calibration_brier_score gauge")
+            lines.append("# TYPE calibration_ece gauge")
+            lines.append("# TYPE calibration_log_loss gauge")
+            lines.append("# TYPE calibration_conformal_coverage gauge")
+            lines.append("# TYPE calibration_conformal_width gauge")
+            lines.append("# TYPE calibration_drift_detected gauge")
+            lines.append("# TYPE calibration_low_confidence_markets gauge")
+            lines.append("# TYPE calibration_total_markets gauge")
 
             for (name, label_items), value in sorted(self._counters.items()):
                 labels = _labels_to_text(dict(label_items))

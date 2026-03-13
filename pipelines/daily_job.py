@@ -7,6 +7,8 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from calibration.metrics import base_rate_drift as _base_rate_drift_fn
+
 from .build_cutoff_snapshots import build_cutoff_snapshots, stage_build_cutoff_snapshots
 from .common import (
     PipelineResult,
@@ -230,6 +232,106 @@ def _load_policy_with_optional_path(loader: Any, config_path: str | None) -> Any
         return loader()
 
 
+def _fallback_run_conformal_update(
+    metric_source_rows: list[dict[str, Any]],
+    *,
+    state_path: str | None = None,
+    target_coverage: float = 0.8,
+    window_size: int = 2000,
+    min_samples: int = 100,
+) -> dict[str, Any]:
+    """Fallback when conformal modules are not available."""
+    return {
+        "status": "skipped",
+        "reason": "conformal modules unavailable",
+        "sample_count": 0,
+    }
+
+
+try:
+    from calibration.conformal import (
+        fit_conformal_adjustment,
+        coverage_report,
+        apply_conformal_adjustment_many,
+    )
+    from calibration.conformal_state import save_conformal_adjustment
+
+    def _run_conformal_update(
+        metric_source_rows: list[dict[str, Any]],
+        *,
+        state_path: str | None = None,
+        target_coverage: float = 0.8,
+        window_size: int = 2000,
+        min_samples: int = 100,
+    ) -> dict[str, Any]:
+        """Run conformal calibration update from in-memory rows.
+
+        Normalises rows into (band, actual) samples, fits conformal adjustment,
+        and optionally persists the result to *state_path*.
+        """
+        from pathlib import Path
+
+        samples: list[tuple[dict[str, float], float]] = []
+        for row in metric_source_rows:
+            q10 = row.get("q10")
+            q50 = row.get("q50")
+            q90 = row.get("q90")
+            actual = row.get("actual") or row.get("resolved_prob")
+            if q10 is None or q50 is None or q90 is None or actual is None:
+                continue
+            try:
+                band = {"q10": float(q10), "q50": float(q50), "q90": float(q90)}
+                actual_f = float(actual)
+            except (TypeError, ValueError):
+                continue
+            samples.append((band, actual_f))
+
+        if window_size > 0:
+            samples = samples[-window_size:]
+
+        if len(samples) < min_samples:
+            return {
+                "status": "skipped",
+                "reason": f"insufficient samples ({len(samples)} < {min_samples})",
+                "sample_count": len(samples),
+            }
+
+        bands = [band for band, _ in samples]
+        actuals = [actual for _, actual in samples]
+        adjustment = fit_conformal_adjustment(bands, actuals, target_coverage=target_coverage)
+
+        pre_report = coverage_report(bands, actuals)
+        post_report = coverage_report(
+            apply_conformal_adjustment_many(bands, adjustment), actuals
+        )
+
+        result: dict[str, Any] = {
+            "status": "updated",
+            "sample_count": len(samples),
+            "target_coverage": target_coverage,
+            "pre_coverage": pre_report["empirical_coverage"],
+            "post_coverage": post_report["empirical_coverage"],
+            "center_shift": adjustment.center_shift,
+            "width_scale": adjustment.width_scale,
+        }
+
+        if state_path is not None:
+            metadata = {
+                "source": "daily_pipeline",
+                "window_size": len(samples),
+                "pre_coverage": pre_report["empirical_coverage"],
+                "post_coverage": post_report["empirical_coverage"],
+                "target_coverage": target_coverage,
+            }
+            save_conformal_adjustment(adjustment, path=Path(state_path), metadata=metadata)
+            result["state_path"] = state_path
+
+        return result
+
+except (ModuleNotFoundError, ImportError):
+    _run_conformal_update = _fallback_run_conformal_update  # type: ignore[assignment]
+
+
 def _fallback_build_and_write_postmortems(
     events: list[dict[str, Any]],
     *,
@@ -259,6 +361,8 @@ DAILY_STAGE_NAMES = (
     "cutoff",
     "features",
     "metrics",
+    "drift",
+    "conformal",
     "publish",
 )
 
@@ -525,6 +629,136 @@ def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
     return output
 
 
+def _stage_drift(context: PipelineRunContext) -> dict[str, Any]:
+    """Run base-rate drift detection on metric source rows.
+
+    Stores the drift result in ``context.state["drift_result"]`` for downstream
+    consumption by the conformal and publish stages.
+    """
+    hook = _resolve_stage_hook(context, "drift_fn")
+    if hook is not None:
+        output = dict(hook(context))
+        output.setdefault("stage", "drift")
+        return output
+
+    metric_source_rows = _rows_to_dicts(context.state.get("metric_rows"))
+    if not metric_source_rows:
+        feature_rows = context.state.get("features")
+        if feature_rows is None:
+            feature_rows = context.state.get("feature_rows")
+        metric_source_rows = _rows_to_dicts(feature_rows)
+
+    if not metric_source_rows:
+        context.state["drift_result"] = {"drift_detected": False, "reason": "no_rows"}
+        return _fallback_stage_output(
+            "drift", "no metric source rows for drift detection", window_count=0,
+        )
+
+    # Rows must have a time key and prediction+label to run drift analysis
+    has_time_key = any("ts" in row for row in metric_source_rows[:5])
+    has_pred_label = any(
+        any(k in row for k in ("pred", "prediction", "p_yes"))
+        and any(k in row for k in ("label", "target", "y"))
+        for row in metric_source_rows[:5]
+    )
+
+    if not has_time_key or not has_pred_label:
+        context.state["drift_result"] = {
+            "drift_detected": False,
+            "reason": "missing_required_fields",
+        }
+        return _fallback_stage_output(
+            "drift", "metric rows lack required fields for drift analysis", window_count=0,
+        )
+
+    try:
+        drift_result = _base_rate_drift_fn(metric_source_rows, time_key="ts")
+        context.state["drift_result"] = drift_result
+    except Exception as exc:  # pragma: no cover - defensive
+        context.state["drift_result"] = {
+            "drift_detected": False,
+            "reason": f"drift analysis error: {exc}",
+        }
+        return {
+            "stage": "drift",
+            "status": "no-op",
+            "reason": f"drift analysis error: {exc}",
+            "drift_detected": False,
+            "window_count": 0,
+        }
+
+    return {
+        "stage": "drift",
+        "drift_detected": bool(drift_result.get("drift_detected")),
+        "base_rate_swing": drift_result.get("base_rate_swing"),
+        "window_count": drift_result.get("n_windows", 0),
+    }
+
+
+def _stage_conformal(context: PipelineRunContext) -> dict[str, Any]:
+    """Run conformal calibration update when drift is detected.
+
+    Only triggers a conformal re-fit when ``drift_result.drift_detected`` is
+    True (set by the preceding drift stage).  This avoids unnecessary
+    recalibration when the model is already well-calibrated.
+    """
+    hook = _resolve_stage_hook(context, "conformal_fn")
+    if hook is not None:
+        output = dict(hook(context))
+        output.setdefault("stage", "conformal")
+        return output
+
+    drift_result = context.state.get("drift_result") or {}
+    drift_detected = bool(drift_result.get("drift_detected", False))
+
+    if not drift_detected:
+        context.state["conformal_result"] = {"status": "skipped", "reason": "no_drift"}
+        return {
+            "stage": "conformal",
+            "status": "success",
+            "conformal_updated": False,
+            "sample_count": 0,
+            "reason": "no drift detected — conformal update skipped",
+        }
+
+    metric_source_rows = _rows_to_dicts(context.state.get("metric_rows"))
+    if not metric_source_rows:
+        feature_rows = context.state.get("features")
+        if feature_rows is None:
+            feature_rows = context.state.get("feature_rows")
+        metric_source_rows = _rows_to_dicts(feature_rows)
+
+    conformal_state_path = context.state.get("conformal_state_path")
+    conformal_state_path_str = str(conformal_state_path) if conformal_state_path is not None else None
+
+    try:
+        conformal_result = _run_conformal_update(
+            metric_source_rows,
+            state_path=conformal_state_path_str,
+        )
+        context.state["conformal_result"] = conformal_result
+    except Exception as exc:  # pragma: no cover - defensive
+        context.state["conformal_result"] = {
+            "status": "error",
+            "reason": str(exc),
+        }
+        return {
+            "stage": "conformal",
+            "status": "no-op",
+            "reason": f"conformal update error: {exc}",
+            "conformal_updated": False,
+            "sample_count": 0,
+        }
+
+    return {
+        "stage": "conformal",
+        "conformal_updated": conformal_result.get("status") == "updated",
+        "sample_count": conformal_result.get("sample_count", 0),
+        "pre_coverage": conformal_result.get("pre_coverage"),
+        "post_coverage": conformal_result.get("post_coverage"),
+    }
+
+
 def _stage_publish(context: PipelineRunContext) -> dict[str, Any]:
     hook = _resolve_stage_hook(context, "publish_fn")
     if hook is None:
@@ -591,6 +825,8 @@ def build_daily_stages() -> list[PipelineStage]:
         PipelineStage(name="cutoff", handler=_stage_cutoff),
         PipelineStage(name="features", handler=_stage_features),
         PipelineStage(name="metrics", handler=_stage_metrics),
+        PipelineStage(name="drift", handler=_stage_drift),
+        PipelineStage(name="conformal", handler=_stage_conformal),
         PipelineStage(name="publish", handler=_stage_publish),
     ]
 

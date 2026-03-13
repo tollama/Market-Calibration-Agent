@@ -5,6 +5,7 @@ from typing import Mapping, Sequence
 
 DEFAULT_BINS = 10
 DEFAULT_EPS = 1e-6
+DEFAULT_MIN_CONFIDENCE_SAMPLES = 30
 
 _PREDICTION_KEYS = ("pred", "prediction", "p_yes", "probability", "prob", "score")
 _LABEL_KEYS = ("label", "target", "y")
@@ -160,6 +161,23 @@ def calibration_slope_intercept(
     return {"slope": slope, "intercept": intercept}
 
 
+def assess_confidence(
+    sample_size: int,
+    min_samples: int = DEFAULT_MIN_CONFIDENCE_SAMPLES,
+) -> dict[str, object]:
+    """Return confidence metadata for a metric set based on sample size.
+
+    When ``sample_size`` < ``min_samples`` the metrics are flagged as
+    ``low_confidence`` to warn consumers that the computed values may be
+    unreliable due to insufficient data (e.g. thin markets).
+    """
+    return {
+        "sample_size": sample_size,
+        "low_confidence": sample_size < min_samples,
+        "min_confidence_samples": min_samples,
+    }
+
+
 def summarize_metrics(
     preds: Sequence[object],
     labels: Sequence[object],
@@ -240,11 +258,147 @@ def segment_metrics(
     }
 
 
+def base_rate_drift(
+    rows: Sequence[Mapping[str, object]],
+    time_key: str = "ts",
+    n_windows: int = 4,
+) -> dict[str, object]:
+    """Detect time-varying base rate drift across chronological windows.
+
+    Splits *rows* into ``n_windows`` equal-sized buckets ordered by
+    ``time_key``, computes per-window base rate and calibration metrics,
+    and flags ``drift_detected`` when the base rate swing (max - min)
+    exceeds ``0.15`` or the per-window Brier score trend is increasing.
+
+    Returns a dict with per-window summaries and an overall drift flag that
+    downstream consumers can use to decide whether adaptive recalibration
+    is needed.
+    """
+    if not rows:
+        raise ValueError("rows must be non-empty")
+    if n_windows < 2:
+        raise ValueError("n_windows must be >= 2")
+
+    decorated: list[tuple[object, object, object]] = []
+    for idx, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"rows[{idx}] must be a mapping")
+        if time_key not in row:
+            raise ValueError(f"rows[{idx}] missing time key: {time_key}")
+        pred = _extract_row_value(
+            row, keys=_PREDICTION_KEYS, row_index=idx, value_name="prediction field",
+        )
+        label = _extract_row_value(
+            row, keys=_LABEL_KEYS, row_index=idx, value_name="label field",
+        )
+        decorated.append((row[time_key], pred, label))
+
+    decorated.sort(key=lambda t: t[0])
+
+    total = len(decorated)
+    window_size = max(1, total // n_windows)
+    windows: list[dict[str, object]] = []
+
+    for i in range(n_windows):
+        start = i * window_size
+        end = start + window_size if i < n_windows - 1 else total
+        chunk = decorated[start:end]
+        if not chunk:
+            continue
+
+        w_preds = [c[1] for c in chunk]
+        w_labels = [c[2] for c in chunk]
+        norm_preds, norm_labels = _validate_inputs(w_preds, w_labels)
+
+        base_rate = sum(norm_labels) / len(norm_labels)
+        mean_pred = sum(norm_preds) / len(norm_preds)
+        w_brier = brier_score(w_preds, w_labels)
+
+        windows.append({
+            "window_index": i,
+            "sample_size": len(chunk),
+            "base_rate": base_rate,
+            "mean_pred": mean_pred,
+            "pred_base_gap": abs(mean_pred - base_rate),
+            "brier": w_brier,
+            "ts_min": chunk[0][0],
+            "ts_max": chunk[-1][0],
+        })
+
+    base_rates = [float(w["base_rate"]) for w in windows]  # type: ignore[arg-type]
+    brier_values = [float(w["brier"]) for w in windows]  # type: ignore[arg-type]
+
+    base_rate_swing = max(base_rates) - min(base_rates) if base_rates else 0.0
+
+    # Detect monotonically increasing Brier (degradation over time)
+    brier_increasing = all(
+        brier_values[j] <= brier_values[j + 1]
+        for j in range(len(brier_values) - 1)
+    ) if len(brier_values) >= 2 else False
+
+    drift_detected = base_rate_swing > 0.15 or (brier_increasing and base_rate_swing > 0.05)
+
+    return {
+        "n_windows": len(windows),
+        "windows": windows,
+        "base_rate_swing": base_rate_swing,
+        "brier_trend_increasing": brier_increasing,
+        "drift_detected": drift_detected,
+    }
+
+
+def recalibrate_predictions(
+    preds: Sequence[object],
+    labels: Sequence[object],
+    *,
+    recent_base_rate: float | None = None,
+    recent_n: int = 0,
+) -> list[float]:
+    """Apply simple base-rate shift recalibration to predictions.
+
+    When a ``recent_base_rate`` is provided (e.g. from the latest window of
+    :func:`base_rate_drift`), predictions are shifted toward the recent base
+    rate using a log-odds adjustment.  This compensates for time-varying base
+    rates without re-training the underlying model.
+
+    If ``recent_base_rate`` is None or ``recent_n`` < 10, the original
+    predictions are returned unchanged (insufficient evidence for correction).
+    """
+    norm_preds, _ = _validate_inputs(preds, labels)
+
+    if recent_base_rate is None or recent_n < 10:
+        return norm_preds
+
+    overall_base_rate = sum(_validate_binary_label(l, index=i) for i, l in enumerate(labels)) / len(labels)
+
+    # Avoid division by zero / extreme log-odds
+    eps = 1e-6
+    clamp = lambda x: min(max(x, eps), 1.0 - eps)  # noqa: E731
+
+    overall_logit = math.log(clamp(overall_base_rate) / (1.0 - clamp(overall_base_rate)))
+    recent_logit = math.log(clamp(recent_base_rate) / (1.0 - clamp(recent_base_rate)))
+    shift = recent_logit - overall_logit
+
+    adjusted: list[float] = []
+    for pred in norm_preds:
+        p = clamp(pred)
+        logit_p = math.log(p / (1.0 - p))
+        adjusted_logit = logit_p + shift
+        adjusted_p = 1.0 / (1.0 + math.exp(-adjusted_logit))
+        adjusted.append(adjusted_p)
+
+    return adjusted
+
+
 __all__ = [
+    "DEFAULT_MIN_CONFIDENCE_SAMPLES",
+    "assess_confidence",
+    "base_rate_drift",
     "brier_score",
     "log_loss",
     "expected_calibration_error",
     "calibration_slope_intercept",
+    "recalibrate_predictions",
     "segment_metrics",
     "summarize_metrics",
     "summarize_metrics_extended",

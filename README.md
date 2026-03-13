@@ -79,6 +79,30 @@ API_BASE=http://127.0.0.1:8100 TSFM_FORECAST_API_TOKEN=<real-secret> scripts/rol
 - **검증**: `artifacts/rollout_gate/rollout_hardening_gate_summary.json`의 `overall_status`가 `success`인지 확인하고, step 로그를 통해 실패 지점을 확인.
 - **실패시 대응**: 토큰·포트·Tollama 경로·레이트리밋 실패를 순차 점검 후 수정하고 게이트를 재실행.
 
+## Trust Score vs Calibration Metrics
+
+Trust Score and calibration metrics (Brier, log-loss, ECE) are **independent systems** that measure different things:
+
+| System | Inputs | Measures |
+| --- | --- | --- |
+| **Trust Score** [0–100] | Market characteristics: liquidity depth, price stability, question quality, manipulation signals | How trustworthy is this *market* as a probability source? |
+| **Calibration Metrics** | Predicted probabilities vs resolved binary outcomes | How *accurate* were the predictions? |
+
+The Trust Score is a linear weighted composite of four market-characteristic components:
+
+```
+trust_score = 100 × (0.35 × liquidity_depth
+                    + 0.25 × stability
+                    + 0.25 × question_quality
+                    + 0.15 × (1 − manipulation_suspect))
+```
+
+Weights are configurable via `configs/default.yaml` under `trust_score.weights`.
+
+Both systems appear side-by-side in the scoreboard (each market row contains `trust_score`, `brier`, `log_loss`, `ece`) but they are computed independently — the Trust Score does **not** aggregate calibration metrics.
+
+See `calibration/trust_score.py` for the Trust Score formula and `calibration/metrics.py` for calibration metric implementations.
+
 ## Config Files
 
 - `configs/default.yaml` - application, data, and calibration defaults.
@@ -96,5 +120,6 @@ API_BASE=http://127.0.0.1:8100 TSFM_FORECAST_API_TOKEN=<real-secret> scripts/rol
 - [PRD1 구현 상태 (I-01~I-20)](docs/prd1-implementation-status.md) - 최신 판정, 남은 갭, 실행 백로그
 - [PRD2 TSFM Runner 구현 상태](docs/prd2-implementation-status.md) - tollama 기반 TSFM runner, fallback, post-processing, conformal, 운영 가이드
 - [PRD2 Dashboards (TSFM observability)](docs/ops/prd2-dashboards.md) - Grafana dashboard import/provisioning and panel expectations
+- [TSFM offline evaluation & benchmark guide](docs/ops/prd2-offline-eval.md) - baseline vs TSFM comparison methodology, acceptance criteria, and Go/No-Go matrix
 - [Conformal calibration ops guide](docs/conformal-ops.md) - rolling updater, state persistence, manual/cron runbook
 - [Label resolver defaults and precedence](docs/label-resolver-defaults.md)

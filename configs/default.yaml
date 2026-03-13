@@ -19,6 +19,7 @@ calibration:
   update_interval_seconds: 3600
   min_volume: 500.0
   confidence_threshold: 0.70
+  min_confidence_samples: 30
   conformal:
     state_path: data/derived/calibration/conformal_state.json
     history_path: data/derived/calibration/conformal_history.jsonl

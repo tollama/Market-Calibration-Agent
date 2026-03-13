@@ -9,7 +9,7 @@ from typing import Any
 
 from calibration.labeling import to_binary_label_rows
 from calibration import metrics as calibration_metrics
-from calibration.metrics import segment_metrics, summarize_metrics
+from calibration.metrics import assess_confidence, segment_metrics, summarize_metrics
 from calibration.trust_score import compute_trust_components, compute_trust_score
 from storage.writers import ParquetWriter, normalize_dt
 
@@ -67,6 +67,7 @@ def build_scoreboard_rows(
 
         averaged_components = _average_trust_components(grouped)
         trust_score = compute_trust_score(averaged_components, weights=trust_weights)
+        confidence = assess_confidence(len(grouped))
 
         score_rows.append(
             {
@@ -74,6 +75,7 @@ def build_scoreboard_rows(
                 "category": category,
                 "liquidity_bucket": liquidity_bucket,
                 "sample_size": len(grouped),
+                "low_confidence": confidence["low_confidence"],
                 "trust_score": trust_score,
                 "brier": market_metrics["brier"],
                 "log_loss": market_metrics["log_loss"],
@@ -162,11 +164,13 @@ def render_scoreboard_markdown(
 
     lines.extend(
         [
-            "| Market ID | Category | Liquidity Bucket | N | Trust Score | Brier | Log Loss | ECE |",
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+            "| Market ID | Category | Liquidity Bucket | N | Low Confidence | Trust Score | Brier | Log Loss | ECE |",
+            "| --- | --- | --- | ---: | :---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for row in score_rows:
+        low_conf = row.get("low_confidence", False)
+        low_conf_marker = "Yes" if low_conf else ""
         lines.append(
             "| "
             + " | ".join(
@@ -175,6 +179,7 @@ def render_scoreboard_markdown(
                     str(row.get("category", "")),
                     str(row.get("liquidity_bucket", "")),
                     str(row.get("sample_size", "")),
+                    low_conf_marker,
                     _format_float(row.get("trust_score"), digits=2),
                     _format_float(row.get("brier")),
                     _format_float(row.get("log_loss")),

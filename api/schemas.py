@@ -37,6 +37,8 @@ class ScoreboardItem(BaseModel):
     brier: Optional[float] = None
     logloss: Optional[float] = None
     ece: Optional[float] = None
+    sample_size: Optional[int] = None
+    low_confidence: Optional[bool] = None
     liquidity_bucket: Optional[str] = None
     category: Optional[str] = None
     as_of: Optional[datetime] = None

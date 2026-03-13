@@ -37,6 +37,10 @@ def _is_placeholder_token(value: str | None) -> bool:
 from fastapi.responses import PlainTextResponse
 
 from .dependencies import LocalDerivedStore, get_derived_store
+from calibration.explainability import (
+    build_market_trust_explanation,
+    build_trust_explanation,
+)
 from .schemas import (
     AlertItem,
     AlertsResponse,
@@ -53,6 +57,7 @@ from .schemas import (
     TSFMForecastRequest,
     TSFMForecastResponse,
 )
+from .xai_schemas import TrustExplanationRequest, TrustExplanationResponse
 from runners.tsfm_service import TSFMRunnerService, TSFMServiceInputError
 
 
@@ -278,6 +283,26 @@ def get_alerts(
 
     items = [AlertItem(**record) for record in records]
     return AlertsResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@app.post("/trust/explain", response_model=TrustExplanationResponse)
+def explain_trust(payload: TrustExplanationRequest) -> TrustExplanationResponse:
+    return TrustExplanationResponse(
+        **build_trust_explanation(payload.model_dump(mode="python", exclude_none=True))
+    )
+
+
+@app.get("/markets/{market_id}/trust-explanation", response_model=TrustExplanationResponse)
+def get_market_trust_explanation(
+    market_id: str,
+    store: LocalDerivedStore = Depends(get_derived_store),
+) -> TrustExplanationResponse:
+    market = store.load_market(market_id)
+    if market is None:
+        raise HTTPException(status_code=404, detail=f"Market not found: {market_id}")
+    metrics = store.load_market_metrics(market_id)
+    explanation = build_market_trust_explanation(market=market, metrics=metrics)
+    return TrustExplanationResponse(**explanation)
 
 
 @app.get("/markets", response_model=MarketsResponse)

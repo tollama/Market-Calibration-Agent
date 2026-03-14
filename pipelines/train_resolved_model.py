@@ -222,7 +222,7 @@ class ResolvedLinearModel:
         self.numeric_mean = {}
         self.numeric_scale = {}
         for column in self.numeric_features:
-            series = pd.to_numeric(frame.get(column), errors="coerce")
+            series = _coerce_numeric_series(frame, column)
             fill = float(series.median()) if series.notna().any() else 0.0
             filled = series.fillna(fill)
             mean = float(filled.mean())
@@ -254,7 +254,7 @@ class ResolvedLinearModel:
     def _transform(self, frame: pd.DataFrame) -> np.ndarray:
         numeric_parts: list[np.ndarray] = []
         for column in self.numeric_features:
-            series = pd.to_numeric(frame.get(column), errors="coerce")
+            series = _coerce_numeric_series(frame, column)
             fill = self.numeric_fill.get(column, 0.0)
             mean = self.numeric_mean.get(column, 0.0)
             scale = self.numeric_scale.get(column, 1.0)
@@ -380,6 +380,14 @@ def _market_prob_series(frame: pd.DataFrame) -> pd.Series:
     if "market_prob" in frame.columns:
         return pd.to_numeric(frame["market_prob"], errors="coerce").fillna(0.5).clip(0.0, 1.0)
     return pd.to_numeric(frame.get("p_yes"), errors="coerce").fillna(0.5).clip(0.0, 1.0)
+
+
+def _coerce_numeric_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column in frame.columns:
+        source = frame[column]
+    else:
+        source = pd.Series([float("nan")] * len(frame), index=frame.index, dtype=float)
+    return pd.to_numeric(source, errors="coerce")
 
 
 def _blend_predictions(

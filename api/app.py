@@ -63,6 +63,12 @@ from .xai_schemas import (
     TrustIntelligenceResponse,
     SHAPFeatureItem,
     ConstraintViolationItem,
+    ConstraintVerifyRequest,
+    ConstraintVerifyResponse,
+    ConstraintVerifyBatchRequest,
+    ConstraintVerifyBatchResponse,
+    AuditTrailEntry,
+    AuditTrailResponse,
 )
 from runners.tsfm_service import TSFMRunnerService, TSFMServiceInputError
 
@@ -716,6 +722,217 @@ def post_tsfm_forecast(payload: TSFMForecastRequest, request: Request) -> TSFMFo
     except (TSFMServiceInputError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return TSFMForecastResponse(**result)
+
+
+# ---- XAI v3 Constraint Verification ----
+
+
+@app.post("/api/xai/v3/constraint-verify", response_model=ConstraintVerifyResponse)
+def post_constraint_verify(payload: ConstraintVerifyRequest) -> ConstraintVerifyResponse:
+    """Verify a prediction against constraint definitions.
+
+    Uses the Z3 SMT solver (or Python fallback) to check business rules.
+    """
+    try:
+        from trust_intelligence.l4_symbolic.z3_verifier import Z3ConstraintVerifier
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    verifier = Z3ConstraintVerifier()
+    result = verifier.verify(
+        prediction=payload.prediction,
+        interval=tuple(payload.interval),
+        context=payload.context,
+        constraints=payload.constraints,
+    )
+
+    violations = [
+        ConstraintViolationItem(
+            constraint_name=v.constraint_name,
+            constraint_type=v.constraint_type,
+            expected=v.expected,
+            actual=v.actual,
+            severity=v.severity,
+        )
+        for v in result.violations
+    ]
+
+    return ConstraintVerifyResponse(
+        constraint_satisfied=result.constraint_satisfied,
+        risk_category=result.risk_category.value if hasattr(result.risk_category, "value") else str(result.risk_category),
+        violations=violations,
+        constraints_checked=result.constraints_checked,
+        verification_time_ms=verifier.last_verification_ms,
+    )
+
+
+@app.post("/api/xai/v3/constraint-verify/batch", response_model=ConstraintVerifyBatchResponse)
+def post_constraint_verify_batch(payload: ConstraintVerifyBatchRequest) -> ConstraintVerifyBatchResponse:
+    """Batch verify multiple predictions against constraint definitions."""
+    try:
+        from trust_intelligence.l4_symbolic.z3_verifier import Z3ConstraintVerifier
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    verifier = Z3ConstraintVerifier()
+    results = []
+    for item in payload.items:
+        result = verifier.verify(
+            prediction=item.prediction,
+            interval=tuple(item.interval),
+            context=item.context,
+            constraints=payload.constraints or item.constraints,
+        )
+        violations = [
+            ConstraintViolationItem(
+                constraint_name=v.constraint_name,
+                constraint_type=v.constraint_type,
+                expected=v.expected,
+                actual=v.actual,
+                severity=v.severity,
+            )
+            for v in result.violations
+        ]
+        results.append(ConstraintVerifyResponse(
+            constraint_satisfied=result.constraint_satisfied,
+            risk_category=result.risk_category.value if hasattr(result.risk_category, "value") else str(result.risk_category),
+            violations=violations,
+            constraints_checked=result.constraints_checked,
+            verification_time_ms=verifier.last_verification_ms,
+        ))
+
+    return ConstraintVerifyBatchResponse(results=results, total=len(results))
+
+
+# ---- XAI v3 Audit Trail ----
+
+
+_AUDIT_LOG_PATH = Path("data/derived/audit/chain_of_trust.jsonl")
+
+
+@app.get("/api/xai/v3/audit-trail/{session_id}", response_model=AuditTrailResponse)
+def get_audit_trail(
+    session_id: str,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> AuditTrailResponse:
+    """Return the Chain-of-Trust audit trail for a session."""
+    try:
+        from trust_intelligence.audit.chain_of_trust import (
+            load_audit_trail,
+            verify_chain_entries,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    if not _AUDIT_LOG_PATH.exists():
+        return AuditTrailResponse(
+            session_id=session_id,
+            entries=[],
+            total=0,
+            chain_valid=True,
+        )
+
+    try:
+        entries = load_audit_trail(
+            _AUDIT_LOG_PATH,
+            session_id=session_id,
+            verify=False,  # verify separately to still return data on failure
+        )
+    except FileNotFoundError:
+        return AuditTrailResponse(
+            session_id=session_id,
+            entries=[],
+            total=0,
+            chain_valid=True,
+        )
+
+    # Verify chain integrity separately
+    chain_valid = verify_chain_entries(entries)
+
+    # Apply limit (most recent)
+    total = len(entries)
+    entries = entries[-limit:]
+
+    api_entries = [
+        AuditTrailEntry(
+            agent_id=e.agent_id,
+            session_id=e.session_id,
+            timestamp=e.timestamp,
+            input_hash=e.input_hash,
+            output_hash=e.output_hash,
+            trust_score_at_step=e.trust_score_at_step,
+            constraint_checks_passed=e.constraint_checks_passed,
+            layer_outputs=e.layer_outputs,
+            chain_hash=e.chain_hash,
+        )
+        for e in entries
+    ]
+
+    return AuditTrailResponse(
+        session_id=session_id,
+        entries=api_entries,
+        total=total,
+        chain_valid=chain_valid,
+    )
+
+
+@app.get("/api/xai/v3/audit-trail", response_model=AuditTrailResponse)
+def get_audit_trail_all(
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> AuditTrailResponse:
+    """Return the full Chain-of-Trust audit trail (all sessions)."""
+    try:
+        from trust_intelligence.audit.chain_of_trust import (
+            load_audit_trail,
+            verify_chain_entries,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    if not _AUDIT_LOG_PATH.exists():
+        return AuditTrailResponse(entries=[], total=0, chain_valid=True)
+
+    try:
+        entries = load_audit_trail(_AUDIT_LOG_PATH, verify=False)
+    except FileNotFoundError:
+        return AuditTrailResponse(entries=[], total=0, chain_valid=True)
+
+    chain_valid = verify_chain_entries(entries)
+    total = len(entries)
+    entries = entries[-limit:]
+
+    api_entries = [
+        AuditTrailEntry(
+            agent_id=e.agent_id,
+            session_id=e.session_id,
+            timestamp=e.timestamp,
+            input_hash=e.input_hash,
+            output_hash=e.output_hash,
+            trust_score_at_step=e.trust_score_at_step,
+            constraint_checks_passed=e.constraint_checks_passed,
+            layer_outputs=e.layer_outputs,
+            chain_hash=e.chain_hash,
+        )
+        for e in entries
+    ]
+
+    return AuditTrailResponse(
+        entries=api_entries,
+        total=total,
+        chain_valid=chain_valid,
+    )
 
 
 @app.get("/metrics", response_class=PlainTextResponse)

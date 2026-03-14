@@ -101,3 +101,78 @@ class TrustIntelligenceResponse(BaseModel):
 
     # Audit
     chain_of_trust_entries: int = 0
+
+
+# ---- Constraint Verification API schemas ----
+
+
+class ConstraintVerifyRequest(BaseModel):
+    """Request to verify constraints against a prediction."""
+
+    prediction: float = Field(description="Predicted probability")
+    interval: List[float] = Field(
+        description="Prediction interval [p_low, p_high]",
+        min_length=2,
+        max_length=2,
+    )
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Context values (trust_score, market_volume_24h, etc.)",
+    )
+    constraints: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Custom constraint definitions. If None, uses defaults.",
+    )
+
+
+class ConstraintVerifyResponse(BaseModel):
+    """Response from constraint verification."""
+
+    constraint_satisfied: bool
+    risk_category: str
+    violations: List[ConstraintViolationItem] = Field(default_factory=list)
+    constraints_checked: int = 0
+    verification_time_ms: Optional[float] = None
+
+
+class ConstraintVerifyBatchRequest(BaseModel):
+    """Batch constraint verification request."""
+
+    items: List[ConstraintVerifyRequest]
+    constraints: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Shared custom constraints for all items.",
+    )
+
+
+class ConstraintVerifyBatchResponse(BaseModel):
+    """Batch constraint verification response."""
+
+    results: List[ConstraintVerifyResponse]
+    total: int
+
+
+# ---- Audit Trail API schemas ----
+
+
+class AuditTrailEntry(BaseModel):
+    """Single audit trail entry for API responses."""
+
+    agent_id: str
+    session_id: str = ""
+    timestamp: str
+    input_hash: str
+    output_hash: str
+    trust_score_at_step: float
+    constraint_checks_passed: bool
+    layer_outputs: Dict[str, Any] = Field(default_factory=dict)
+    chain_hash: str = ""
+
+
+class AuditTrailResponse(BaseModel):
+    """Audit trail response."""
+
+    session_id: Optional[str] = None
+    entries: List[AuditTrailEntry] = Field(default_factory=list)
+    total: int = 0
+    chain_valid: bool = True

@@ -47,6 +47,7 @@ trust_score:
 trust_intelligence:
   enabled: true
   formula_version: v3
+  conformal_method: auto
   trust_threshold: 0.3
   max_retries: 2
   persist_results: true

@@ -99,6 +99,7 @@ def _as_finite_float(value: object, *, name: str) -> float:
 _DEFAULT_TI_CONFIG: dict[str, object] = {
     "enabled": True,
     "formula_version": "v3",
+    "conformal_method": "auto",
     "trust_threshold": 0.3,
     "max_retries": 2,
     "persist_results": True,
@@ -128,7 +129,7 @@ def load_trust_intelligence_config(
         return dict(_DEFAULT_TI_CONFIG)
 
     config = dict(_DEFAULT_TI_CONFIG)
-    for key in ("enabled", "formula_version", "trust_threshold", "max_retries", "persist_results"):
+    for key in ("enabled", "formula_version", "conformal_method", "trust_threshold", "max_retries", "persist_results"):
         if key in ti_section:
             config[key] = ti_section[key]
 

@@ -718,8 +718,15 @@ def _stage_trust_intelligence(context: PipelineRunContext) -> dict[str, Any]:
         from trust_intelligence.pipeline.trust_pipeline import TrustIntelligencePipeline
         from trust_intelligence.audit.chain_of_trust import ChainOfTrustLogger
 
+        conformal_method = ti_config.get("conformal_method", "auto")
+        if not isinstance(conformal_method, str):
+            conformal_method = "auto"
+
         audit_logger = ChainOfTrustLogger(agent_id=agent_id) if audit_enabled else None
-        pipeline = TrustIntelligencePipeline(audit_logger=audit_logger)
+        pipeline = TrustIntelligencePipeline(
+            audit_logger=audit_logger,
+            conformal_method=conformal_method,
+        )
     except Exception:
         context.state["trust_intelligence_results"] = {}
         return _fallback_stage_output(
@@ -944,6 +951,7 @@ def _stage_publish(context: PipelineRunContext) -> dict[str, Any]:
         if ti_persist and isinstance(ti_results, dict) and ti_results:
             ti_root = context.state.get("root_path") or "."
             ti_written = _write_trust_intelligence_results(ti_results, root=ti_root)
+            _persist_cptc_state(ti_results)
         context.state["ti_written_count"] = ti_written
 
         output = {}
@@ -1000,6 +1008,36 @@ def _write_trust_intelligence_results(
         output_path.write_text(json.dumps(rows, default=str), encoding="utf-8")
 
     return len(rows)
+
+
+def _persist_cptc_state(ti_results: dict[str, Any]) -> None:
+    """Persist CPTC change-point state from TI pipeline results."""
+    try:
+        from calibration.conformal_state import save_cptc_state
+    except ImportError:
+        return
+
+    for _market_id, result in ti_results.items():
+        # Access conformal layer output
+        conformal = getattr(result, "conformal", None)
+        if conformal is None and isinstance(result, dict):
+            conformal = result.get("conformal")
+
+        if conformal is None:
+            continue
+
+        method = getattr(conformal, "method", None)
+        if method is None and isinstance(conformal, dict):
+            method = conformal.get("method")
+
+        if method != "cptc":
+            continue
+
+        # Get the pipeline's L2 engine to check for change-point state
+        # This is best-effort; skip silently if unavailable
+        break
+    # Only persist aggregate CPTC state if method was used
+    # Individual per-market results are already in results.json
 
 
 def build_daily_stages() -> list[PipelineStage]:

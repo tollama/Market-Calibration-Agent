@@ -5,7 +5,12 @@ import json
 import pytest
 
 from calibration.conformal import ConformalAdjustment
-from calibration.conformal_state import load_conformal_adjustment, save_conformal_adjustment
+from calibration.conformal_state import (
+    load_conformal_adjustment,
+    load_cptc_state,
+    save_conformal_adjustment,
+    save_cptc_state,
+)
 
 
 def test_save_and_load_conformal_adjustment_roundtrip(tmp_path) -> None:
@@ -46,3 +51,44 @@ def test_load_conformal_adjustment_supports_legacy_flat_payload(tmp_path) -> Non
     loaded = load_conformal_adjustment(path)
     assert loaded is not None
     assert loaded.width_scale == pytest.approx(1.1)
+
+
+def test_save_and_load_cptc_state_roundtrip(tmp_path) -> None:
+    path = tmp_path / "cptc_state.json"
+    save_cptc_state(
+        change_point_detected=True,
+        change_point_index=30,
+        test_statistic=2.5,
+        threshold=1.8,
+        n_pre=30,
+        n_post=20,
+        path=path,
+        metadata={"source": "unit-test"},
+    )
+    loaded = load_cptc_state(path)
+    assert loaded is not None
+    assert loaded["change_point"]["detected"] is True
+    assert loaded["change_point"]["index"] == 30
+    assert loaded["change_point"]["test_statistic"] == pytest.approx(2.5)
+    assert loaded["conformal_method"] == "cptc"
+
+
+def test_load_cptc_state_missing_file_returns_none(tmp_path) -> None:
+    assert load_cptc_state(tmp_path / "missing.json") is None
+
+
+def test_save_cptc_state_no_change_point(tmp_path) -> None:
+    path = tmp_path / "cptc_state.json"
+    save_cptc_state(
+        change_point_detected=False,
+        change_point_index=None,
+        test_statistic=0.5,
+        threshold=1.8,
+        n_pre=50,
+        n_post=0,
+        path=path,
+    )
+    loaded = load_cptc_state(path)
+    assert loaded is not None
+    assert loaded["change_point"]["detected"] is False
+    assert loaded["change_point"]["index"] is None

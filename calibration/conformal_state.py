@@ -72,8 +72,61 @@ def save_conformal_adjustment(
     return resolved
 
 
+DEFAULT_CPTC_STATE_PATH = Path("data/derived/calibration/cptc_state.json")
+
+
+def load_cptc_state(path: str | Path | None = None) -> dict[str, Any] | None:
+    """Load persisted CPTC change-point state from disk."""
+    resolved = Path(path) if path is not None else DEFAULT_CPTC_STATE_PATH
+    if not resolved.exists():
+        return None
+
+    payload = json.loads(resolved.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"Invalid CPTC state payload at {resolved}")
+
+    return dict(payload)
+
+
+def save_cptc_state(
+    *,
+    change_point_detected: bool,
+    change_point_index: int | None,
+    test_statistic: float,
+    threshold: float,
+    n_pre: int,
+    n_post: int,
+    conformal_method: str = "cptc",
+    path: str | Path | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> Path:
+    """Persist CPTC change-point detection state to disk."""
+    resolved = Path(path) if path is not None else DEFAULT_CPTC_STATE_PATH
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "schema_version": 1,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "conformal_method": conformal_method,
+        "change_point": {
+            "detected": change_point_detected,
+            "index": change_point_index,
+            "test_statistic": test_statistic,
+            "threshold": threshold,
+            "n_pre": n_pre,
+            "n_post": n_post,
+        },
+        "metadata": dict(metadata or {}),
+    }
+    resolved.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return resolved
+
+
 __all__ = [
     "DEFAULT_CONFORMAL_STATE_PATH",
+    "DEFAULT_CPTC_STATE_PATH",
     "load_conformal_adjustment",
+    "load_cptc_state",
     "save_conformal_adjustment",
+    "save_cptc_state",
 ]

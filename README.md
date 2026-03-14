@@ -6,7 +6,7 @@ It combines data ingestion, calibration metrics, trust scoring, alerting, and fo
 
 ## What This App Can Do
 
-- Ingest Polymarket market/event data from REST, websocket, and subgraph sources.
+- Ingest prediction-market data from multiple platforms (Polymarket, Kalshi, Manifold Markets) via a unified connector abstraction layer.
 - Build deterministic feature frames and cutoff snapshots for calibration workflows.
 - Compute calibration metrics (Brier, log-loss, ECE, segments) and trust scores.
 - Generate alert feeds with configurable thresholds and gating policies.
@@ -116,7 +116,7 @@ See `calibration/trust_score.py` for the Trust Score formula and `calibration/me
 
 ## Config Files
 
-- `configs/default.yaml` - application, data, and calibration defaults.
+- `configs/default.yaml` - application, data, calibration defaults, and multi-platform configuration (`platforms` section).
 - `configs/alerts.yaml` - alert thresholds, cooldowns, and channels.
 - `configs/models.yaml` - model profiles and feature settings.
 - `configs/logging.yaml` - Python logging configuration.

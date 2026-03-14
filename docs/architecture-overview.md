@@ -14,12 +14,17 @@ flowchart LR
   A["Polymarket Gamma API"] --> B["connectors/polymarket_gamma.py"]
   C["Polymarket WebSocket"] --> D["connectors/polymarket_ws.py"]
   E["Polymarket Subgraph"] --> F["connectors/polymarket_subgraph.py"]
+  KA["Kalshi API"] --> KB["connectors/kalshi.py"]
+  MA["Manifold API"] --> MB["connectors/manifold.py"]
 
   B --> G["pipelines/ingest_gamma_raw.py"]
+  KB --> MPI["pipelines/ingest_platform_raw.py"]
+  MB --> MPI
   D --> H["pipelines/realtime_ws_job.py"]
   F --> I["registry/build_registry.py"]
 
   G --> J["pipelines/daily_job.py"]
+  MPI --> J
   I --> J
   J --> K["features/build_features.py"]
   K --> L["calibration + trust + alerts"]
@@ -32,10 +37,20 @@ flowchart LR
 
 ## 3) Main Components
 
-- Data connectors:
+- Connector abstraction layer:
+  - `connectors/base.py`: `MarketDataConnector`, `MetricsConnector`, `RealtimeConnector` Protocol definitions.
+  - `connectors/factory.py`: platform-aware connector factory (`create_connector`, `create_metrics_connector`, `create_realtime_connector`).
+  - `connectors/normalizers.py`: `MarketNormalizer` Protocol for platform-specific field mapping.
+- Data connectors (Polymarket):
   - `connectors/polymarket_gamma.py`: async HTTP client, pagination, retries, optional rate limiting, snake_case normalization.
   - `connectors/polymarket_subgraph.py`: GraphQL client with retry/backoff and normalized metric rows.
   - `connectors/polymarket_ws.py`: async websocket stream with reconnect/backoff and subscription helpers.
+- Data connectors (Kalshi):
+  - `connectors/kalshi.py`: async HTTP client with cursor pagination, bearer-token auth, retry/backoff.
+  - `connectors/kalshi_normalizer.py`: field mapping (ticker-based IDs, bid/ask midpoint probabilities).
+- Data connectors (Manifold Markets):
+  - `connectors/manifold.py`: async HTTP client with before-cursor pagination, no auth, deduplication.
+  - `connectors/manifold_normalizer.py`: field mapping (binary and multi-outcome market flattening).
 - Pipeline orchestration:
   - `pipelines/daily_job.py`: staged orchestrator (`discover -> ingest -> normalize -> snapshots -> cutoff -> features -> metrics -> publish`) with checkpoint/resume and retry controls.
   - `pipelines/realtime_ws_job.py`: captures ticks, builds 1m/5m bars, writes run metrics.
@@ -56,7 +71,7 @@ flowchart LR
 
 ### 4.1 Batch Daily Flow (PRD1)
 
-1. Ingest Gamma markets/events (`pipelines/ingest_gamma_raw.py`).
+1. Ingest Gamma markets/events (`pipelines/ingest_gamma_raw.py`) and/or multi-platform markets (`pipelines/ingest_platform_raw.py`).
 2. Normalize + snapshot + optional registry enrichment (`pipelines/registry_linker.py`).
 3. Build cutoff snapshots (`pipelines/build_cutoff_snapshots.py`).
 4. Build feature frame (`pipelines/build_feature_frame.py` -> `features/build_features.py`).
@@ -83,6 +98,7 @@ flowchart LR
 ## 5) Data & Storage Contracts
 
 - Raw storage: `raw/<dataset>/dt=YYYY-MM-DD/*.jsonl`.
+- Multi-platform raw storage: `raw/{kalshi,manifold}/dt=YYYY-MM-DD/{markets,events}.jsonl`.
 - Derived storage: `derived/<dataset>/dt=YYYY-MM-DD/*.parquet`.
 - PRD1 migration-safe ingest writes both canonical and legacy Gamma raw layouts.
 - API store loader (`api/dependencies.py`) reads:

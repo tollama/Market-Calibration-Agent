@@ -53,11 +53,15 @@
 - Polymarket Gamma REST API (`connectors/polymarket_gamma.py`).
 - Polymarket market websocket stream (`connectors/polymarket_ws.py`).
 - Polymarket subgraph GraphQL endpoint (`connectors/polymarket_subgraph.py`).
+- Kalshi Trading API (`connectors/kalshi.py`) — bearer-token auth, cursor pagination.
+- Manifold Markets API (`connectors/manifold.py`) — public/no-auth, before-cursor pagination.
 - tollama-compatible time-series forecast endpoint (`configs/tsfm_models.yaml` + adapter config).
+
+All platform connectors implement `MarketDataConnector` Protocol (`connectors/base.py`) and are instantiated via `connectors/factory.py`.
 
 ## Configuration Model
 
-- `configs/default.yaml`: app defaults, prep/calibration/trust/API settings.
+- `configs/default.yaml`: app defaults, prep/calibration/trust/API settings, and `platforms` section (Polymarket, Kalshi, Manifold enable/disable and connection config).
 - `configs/alerts.yaml`: alert thresholds and trust gate.
 - `configs/models.yaml`: baseline model family and feature selection.
 - `configs/tsfm_runtime.yaml`: TSFM runtime, fallback, cache, breaker, degradation, SLO defaults.

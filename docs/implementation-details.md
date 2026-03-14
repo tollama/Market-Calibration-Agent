@@ -4,7 +4,7 @@ This document explains how the main modules are implemented and how runtime beha
 
 ## 1) Repository Layering
 
-- `connectors/`: external data acquisition (Gamma REST, Subgraph GraphQL, WebSocket stream).
+- `connectors/`: external data acquisition via a platform-agnostic abstraction layer (Polymarket Gamma REST/Subgraph/WS, Kalshi REST, Manifold REST).
 - `registry/`: canonical market registry build/merge/conflict logic.
 - `pipelines/`: orchestration and transformation stages.
 - `features/`: deterministic feature engineering.
@@ -16,9 +16,17 @@ This document explains how the main modules are implemented and how runtime beha
 - `reports/`: markdown postmortem rendering.
 - `demo/`: Streamlit live demo app.
 
-## 2) Data Ingestion and Normalization
+## 2) Connector Abstraction Layer
 
-### Gamma REST (`connectors/polymarket_gamma.py`)
+All platform connectors implement the `MarketDataConnector` Protocol (`connectors/base.py`), which requires `fetch_markets()` and `fetch_events()` methods. Optional capability protocols (`MetricsConnector`, `RealtimeConnector`) are used for platforms that support metrics queries or realtime streaming.
+
+- `connectors/factory.py` provides `create_connector()`, `create_metrics_connector()`, and `create_realtime_connector()` factory functions keyed by `Platform` enum.
+- `connectors/normalizers.py` defines the `MarketNormalizer` Protocol for platform-specific field mapping to the canonical `MarketSnapshot` schema.
+- Platform is configured in `configs/default.yaml` under the `platforms` section. Each platform has `enabled`, `connector`, `base_url`, auth env vars, and websocket settings.
+
+## 3) Data Ingestion and Normalization
+
+### Polymarket Gamma REST (`connectors/polymarket_gamma.py`)
 
 - Async connector with:
   - retryable status handling (`408, 429, 500, 502, 503, 504`)
@@ -29,19 +37,48 @@ This document explains how the main modules are implemented and how runtime beha
   - recursive key conversion to snake_case
   - canonical `record_id` extraction (`<record_type>_id`, `id`, `condition_id`, `slug`)
 
-### Subgraph GraphQL (`connectors/polymarket_subgraph.py`)
+### Polymarket Subgraph GraphQL (`connectors/polymarket_subgraph.py`)
 
 - `GraphQLClient` wraps transport retries/backoff and GraphQL error handling.
 - `SubgraphQueryRunner` paginates by `market_id`, accumulates partial failures, and returns normalized metric rows:
   - `market_id`, `event_id`, `metric`, `value`, `timestamp`, `source`.
 
-### Websocket Stream (`connectors/polymarket_ws.py`)
+### Polymarket Websocket Stream (`connectors/polymarket_ws.py`)
 
 - Async stream with reconnect retries and backoff.
 - Accepts dict/list/callable subscription payload.
 - Tracks stream stats (`reconnects`, yielded count, skipped non-json frames).
 
-## 3) Orchestration Pipeline
+### Kalshi REST (`connectors/kalshi.py`)
+
+- Async connector with bearer-token auth (`api_key_id` from env vars).
+- Cursor-based pagination using `cursor` field in API response.
+- Same retry/backoff patterns as Gamma connector (retryable statuses: `408, 429, 500, 502, 503, 504`).
+- Normalization via `connectors/kalshi_normalizer.py`:
+  - `ticker` -> platform-prefixed `market_id` (`kalshi:{ticker}`)
+  - `yes_bid`/`yes_ask` midpoint -> `p_yes`
+  - `volume` -> `volume_24h`, `open_interest` -> `open_interest`
+  - `close_time` delta -> `tte_seconds`
+
+### Manifold Markets REST (`connectors/manifold.py`)
+
+- Async connector with no auth required (public API).
+- Before-cursor pagination using last item's `id` as the `before` parameter.
+- Deduplication by `id` across pages via `seen_ids` set.
+- `fetch_events()` returns `[]` (Manifold has no separate events concept).
+- Normalization via `connectors/manifold_normalizer.py`:
+  - `id` -> platform-prefixed `market_id` (`manifold:{id}`)
+  - `probability` -> `p_yes` (binary markets)
+  - Multi-outcome markets: each answer flattened into a separate row with `market_id = manifold:{id}:{answer_id}`
+  - `totalLiquidity` -> `open_interest` proxy, `uniqueBettorCount` -> `num_traders_proxy`
+
+### Generalized Platform Ingestion (`pipelines/ingest_platform_raw.py`)
+
+- Platform-parameterized version of `ingest_gamma_raw` for non-Polymarket platforms.
+- Writes to `raw/{platform}/dt=YYYY-MM-DD/{markets,events}.jsonl`.
+- `pipelines/multi_platform_ingest.py` orchestrates ingestion across all enabled platforms in config.
+
+## 4) Orchestration Pipeline
 
 ### Daily orchestrator (`pipelines/daily_job.py`)
 
@@ -66,7 +103,7 @@ This document explains how the main modules are implemented and how runtime beha
   - computes alert feed rows with trust gating support
 - `publish`: prepares published records and writes postmortem markdown batch.
 
-## 4) Registry and Contract Handling
+## 5) Registry and Contract Handling
 
 - `registry/conflict_rules.py` canonicalizes market rows and enforces merge semantics:
   - `market_id` immutable key.
@@ -77,7 +114,7 @@ This document explains how the main modules are implemented and how runtime beha
   - slug history rows on slug change
   - conflict accumulation in deterministic order.
 
-## 5) Feature, Calibration, and Trust Computation
+## 6) Feature, Calibration, and Trust Computation
 
 ### Feature engineering (`features/build_features.py`)
 
@@ -108,7 +145,7 @@ This document explains how the main modules are implemented and how runtime beha
 - `manipulation_suspect` is inverted in the final aggregation.
 - Weights are normalized and can be injected from `configs/default.yaml`.
 
-## 6) Alerting Logic
+## 7) Alerting Logic
 
 ### Rule engine (`agents/alert_agent.py`)
 
@@ -138,7 +175,7 @@ This document explains how the main modules are implemented and how runtime beha
 - Only top-N selected markets request TSFM forecasts.
 - Produces explicit per-market decisions (`EMIT` vs `SUPPRESS` with reason codes).
 
-## 7) TSFM Runner Service Internals
+## 8) TSFM Runner Service Internals
 
 ### Request lifecycle (`runners/tsfm_service.py`)
 
@@ -179,7 +216,7 @@ This document explains how the main modules are implemented and how runtime beha
 - Handles retryable HTTP/network errors with backoff+jitter.
 - Extracts quantile payload from known response shapes and returns normalized `dict[float, list[float]]`.
 
-## 8) API and Derived Store Behavior
+## 9) API and Derived Store Behavior
 
 ### API endpoints (`api/app.py`)
 
@@ -211,14 +248,14 @@ This document explains how the main modules are implemented and how runtime beha
 - Alert cache includes source-signature invalidation and deduping strategy.
 - Postmortem loader prefers dated files and falls back to plain `<market_id>.md`.
 
-## 9) LLM-Specific Agent Implementation
+## 10) LLM-Specific Agent Implementation
 
 - `llm/client.py` enforces deterministic sampling policy defaults (seed/temperature/top_p).
 - Strict JSON parsing/validation in `llm/schemas.py` rejects missing/extra keys and invalid field types.
 - `agents/question_quality_agent.py` retries up to 3 times on strict JSON violations.
 - `agents/explain_agent.py` applies evidence-bound validation (`agents/explain_validator.py`) and line-level output policy.
 
-## 10) Operational Scripts and Gates
+## 11) Operational Scripts and Gates
 
 - Release and hardening scripts:
   - `scripts/prd2_verify_all.sh`

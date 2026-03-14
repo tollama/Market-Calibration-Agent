@@ -128,6 +128,7 @@ See `calibration/trust_score.py` for the Trust Score formula and `calibration/me
 - [Architecture overview](docs/architecture-overview.md) - system components, runtime flows, storage contracts, and reliability controls
 - [Technology stack](docs/technology-stack.md) - runtime dependencies, config model, external integrations, and CI/tooling
 - [Implementation details](docs/implementation-details.md) - module-level behavior across connectors, pipelines, API, and TSFM service internals
+- [Multi-platform expansion](docs/multi-platform-expansion.md) - Kalshi/Manifold connector design, value proposition, reliability guarantees, and technical details
 - [PRD1 구현 상태 (I-01~I-20)](docs/prd1-implementation-status.md) - 최신 판정, 남은 갭, 실행 백로그
 - [PRD2 TSFM Runner 구현 상태](docs/prd2-implementation-status.md) - tollama 기반 TSFM runner, fallback, post-processing, conformal, 운영 가이드
 - [PRD2 Dashboards (TSFM observability)](docs/ops/prd2-dashboards.md) - Grafana dashboard import/provisioning and panel expectations

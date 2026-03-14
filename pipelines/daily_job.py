@@ -223,6 +223,18 @@ except ModuleNotFoundError as exc:
     load_alert_min_trust_score = _fallback_load_alert_min_trust_score
 
 
+try:
+    from calibration.trust_intelligence_adapter import (
+        HAS_TRUST_INTELLIGENCE,
+        run_trust_intelligence_for_market,
+    )
+except ImportError:
+    HAS_TRUST_INTELLIGENCE = False
+
+    def run_trust_intelligence_for_market(*args: Any, **kwargs: Any) -> None:
+        return None
+
+
 def _load_policy_with_optional_path(loader: Any, config_path: str | None) -> Any:
     if not callable(loader):
         return None
@@ -361,6 +373,7 @@ DAILY_STAGE_NAMES = (
     "cutoff",
     "features",
     "metrics",
+    "trust_intelligence",
     "drift",
     "conformal",
     "publish",
@@ -629,6 +642,105 @@ def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
     return output
 
 
+def _stage_trust_intelligence(context: PipelineRunContext) -> dict[str, Any]:
+    """Run Trust Intelligence Pipeline v3.0 for each market.
+
+    Reads scoreboard rows produced by the metrics stage and runs the full
+    L1-L5 pipeline per market. Results are stored in
+    ``context.state["trust_intelligence_results"]`` keyed by market_id.
+    """
+    if not HAS_TRUST_INTELLIGENCE:
+        context.state["trust_intelligence_results"] = {}
+        return _fallback_stage_output(
+            "trust_intelligence",
+            "trust_intelligence package not installed",
+            market_count=0,
+        )
+
+    hook = _resolve_stage_hook(context, "trust_intelligence_fn")
+    if hook is not None:
+        output = dict(hook(context))
+        output.setdefault("stage", "trust_intelligence")
+        return output
+
+    scoreboard_rows = _rows_to_dicts(context.state.get("scoreboard_rows"))
+    feature_rows = context.state.get("features")
+    if feature_rows is None:
+        feature_rows = context.state.get("feature_rows")
+    feature_rows = _rows_to_dicts(feature_rows)
+
+    if not scoreboard_rows:
+        context.state["trust_intelligence_results"] = {}
+        return _fallback_stage_output(
+            "trust_intelligence",
+            "no scoreboard rows to process",
+            market_count=0,
+        )
+
+    # Group feature rows by market_id for per-market pipeline runs
+    market_feature_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in feature_rows:
+        mid = str(row.get("market_id", ""))
+        if mid:
+            market_feature_rows.setdefault(mid, []).append(row)
+
+    # Initialize pipeline once for all markets
+    try:
+        from trust_intelligence.pipeline.trust_pipeline import TrustIntelligencePipeline
+        from trust_intelligence.audit.chain_of_trust import ChainOfTrustLogger
+
+        audit_logger = ChainOfTrustLogger(agent_id="mca-daily-pipeline")
+        pipeline = TrustIntelligencePipeline(audit_logger=audit_logger)
+    except Exception:
+        context.state["trust_intelligence_results"] = {}
+        return _fallback_stage_output(
+            "trust_intelligence",
+            "failed to initialize Trust Intelligence Pipeline",
+            market_count=0,
+        )
+
+    results: dict[str, Any] = {}
+    succeeded = 0
+    failed = 0
+
+    for sb_row in scoreboard_rows:
+        market_id = str(sb_row.get("market_id", ""))
+        if not market_id:
+            continue
+
+        v1_trust_score = sb_row.get("trust_score")
+        if isinstance(v1_trust_score, (int, float)):
+            v1_trust_score = float(v1_trust_score)
+        else:
+            v1_trust_score = None
+
+        rows_for_market = market_feature_rows.get(market_id, [])
+        # If no feature rows, build a synthetic row from scoreboard data
+        if not rows_for_market:
+            rows_for_market = [dict(sb_row)]
+
+        ti_result = run_trust_intelligence_for_market(
+            pipeline,
+            market_rows=rows_for_market,
+            v1_trust_score=v1_trust_score,
+        )
+
+        if ti_result is not None:
+            results[market_id] = ti_result
+            succeeded += 1
+        else:
+            failed += 1
+
+    context.state["trust_intelligence_results"] = results
+
+    return {
+        "stage": "trust_intelligence",
+        "market_count": len(scoreboard_rows),
+        "succeeded": succeeded,
+        "failed": failed,
+    }
+
+
 def _stage_drift(context: PipelineRunContext) -> dict[str, Any]:
     """Run base-rate drift detection on metric source rows.
 
@@ -825,6 +937,7 @@ def build_daily_stages() -> list[PipelineStage]:
         PipelineStage(name="cutoff", handler=_stage_cutoff),
         PipelineStage(name="features", handler=_stage_features),
         PipelineStage(name="metrics", handler=_stage_metrics),
+        PipelineStage(name="trust_intelligence", handler=_stage_trust_intelligence),
         PipelineStage(name="drift", handler=_stage_drift),
         PipelineStage(name="conformal", handler=_stage_conformal),
         PipelineStage(name="publish", handler=_stage_publish),

@@ -57,7 +57,13 @@ from .schemas import (
     TSFMForecastRequest,
     TSFMForecastResponse,
 )
-from .xai_schemas import TrustExplanationRequest, TrustExplanationResponse
+from .xai_schemas import (
+    TrustExplanationRequest,
+    TrustExplanationResponse,
+    TrustIntelligenceResponse,
+    SHAPFeatureItem,
+    ConstraintViolationItem,
+)
 from runners.tsfm_service import TSFMRunnerService, TSFMServiceInputError
 
 
@@ -303,6 +309,143 @@ def get_market_trust_explanation(
     metrics = store.load_market_metrics(market_id)
     explanation = build_market_trust_explanation(market=market, metrics=metrics)
     return TrustExplanationResponse(**explanation)
+
+
+@app.get(
+    "/trust-intelligence/{market_id}",
+    response_model=TrustIntelligenceResponse,
+)
+def get_trust_intelligence(
+    market_id: str,
+    store: LocalDerivedStore = Depends(get_derived_store),
+) -> TrustIntelligenceResponse:
+    """Return Trust Intelligence Pipeline v3.0 output for a market.
+
+    Falls back to running the pipeline on-demand if persisted results
+    are not available but the trust_intelligence package is installed.
+    """
+    # Try loading persisted result first
+    persisted = store.load_trust_intelligence(market_id)
+    if persisted is not None:
+        return _build_ti_response(market_id, persisted)
+
+    # Fall back to on-demand computation
+    try:
+        from calibration.trust_intelligence_adapter import (
+            HAS_TRUST_INTELLIGENCE,
+            run_trust_intelligence_for_market,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    if not HAS_TRUST_INTELLIGENCE:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    market = store.load_market(market_id)
+    if market is None:
+        raise HTTPException(status_code=404, detail=f"Market not found: {market_id}")
+
+    # Build a minimal row from scoreboard data
+    scoreboard = store.load_scoreboard(window="90d")
+    market_row = next(
+        (r for r in scoreboard if str(r.get("market_id", "")) == market_id),
+        None,
+    )
+    if market_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No scoreboard data for market: {market_id}",
+        )
+
+    from trust_intelligence.pipeline.trust_pipeline import TrustIntelligencePipeline
+
+    pipeline = TrustIntelligencePipeline()
+    ti_result = run_trust_intelligence_for_market(
+        pipeline,
+        market_rows=[market_row],
+        v1_trust_score=market_row.get("trust_score"),
+    )
+    if ti_result is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Trust Intelligence Pipeline execution failed",
+        )
+
+    result_dict = ti_result.model_dump() if hasattr(ti_result, "model_dump") else {}
+    result_dict["market_id"] = market_id
+    result_dict["trust_score_v1"] = market_row.get("trust_score")
+    return _build_ti_response(market_id, result_dict)
+
+
+def _build_ti_response(
+    market_id: str,
+    data: Mapping[str, Any],
+) -> TrustIntelligenceResponse:
+    """Build TrustIntelligenceResponse from pipeline result dict."""
+    uncertainty = data.get("uncertainty") or {}
+    conformal = data.get("conformal") or {}
+    shap = data.get("shap") or {}
+    constraints = data.get("constraints") or {}
+    trust = data.get("trust") or {}
+
+    top_features = []
+    for fc in (shap.get("feature_contributions") or [])[:5]:
+        if isinstance(fc, Mapping):
+            top_features.append(SHAPFeatureItem(
+                feature_name=str(fc.get("feature_name", "")),
+                shap_value=float(fc.get("shap_value", 0)),
+                rank=int(fc.get("rank", 0)),
+                direction=str(fc.get("direction", "positive")),
+            ))
+
+    violations = []
+    for v in constraints.get("violations") or []:
+        if isinstance(v, Mapping):
+            violations.append(ConstraintViolationItem(
+                constraint_name=str(v.get("constraint_name", "")),
+                constraint_type=str(v.get("constraint_type", "")),
+                expected=str(v.get("expected", "")),
+                actual=str(v.get("actual", "")),
+                severity=str(v.get("severity", "")),
+            ))
+
+    risk_cat = constraints.get("risk_category", "GREEN")
+    if isinstance(risk_cat, Mapping):
+        risk_cat = "GREEN"
+    risk_cat_str = str(risk_cat)
+
+    return TrustIntelligenceResponse(
+        market_id=market_id,
+        trust_score=float(trust.get("trust_score", 0.5)),
+        trust_score_v1=data.get("trust_score_v1"),
+        entropy=float(uncertainty.get("entropy", 0)),
+        normalized_uncertainty=float(uncertainty.get("normalized_uncertainty", 0.5)),
+        prediction_probability=float(uncertainty.get("prediction_probability", 0.5)),
+        conformal_method=str(conformal.get("method", "none")),
+        conformal_p_low=float(conformal.get("p_low", 0)),
+        conformal_p_high=float(conformal.get("p_high", 1)),
+        coverage_validity=bool(conformal.get("coverage_validity", False)),
+        coverage_tightness=float(conformal.get("coverage_tightness", 0.5)),
+        shap_stability=float(shap.get("shap_stability", 0.5)),
+        shap_iterations=int(shap.get("iterations_used", 0)),
+        top_features=top_features,
+        constraint_satisfied=bool(constraints.get("constraint_satisfied", True)),
+        risk_category=risk_cat_str,
+        violations=violations,
+        constraints_checked=int(constraints.get("constraints_checked", 0)),
+        weights=trust.get("weights") or {},
+        component_scores=trust.get("component_scores") or {},
+        calibration_status=str(trust.get("calibration_status", "well_calibrated")),
+        ece=float(trust.get("ece", 0)),
+        ocr=float(trust.get("ocr", 0)),
+        chain_of_trust_entries=len(data.get("chain_of_trust") or []),
+    )
 
 
 @app.get("/markets", response_model=MarketsResponse)

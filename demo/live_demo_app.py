@@ -220,6 +220,7 @@ pages = {
     T["detail"]: "detail",
     T["compare"]: "compare",
     T["obs"]: "obs",
+    "Trust Intelligence v3": "trust_intelligence",
 }
 page = st.sidebar.radio(T["page"], list(pages.keys()))
 
@@ -1357,3 +1358,164 @@ elif pages[page] == "obs":
 
         with st.expander("Raw /metrics", expanded=False):
             st.code("\n".join(metrics_text.text.splitlines()[:120]))
+
+elif pages[page] == "trust_intelligence":
+    st.header("Trust Intelligence Pipeline v3.0")
+    st.caption(
+        "5-layer trust verification: Entropy, Conformal, SHAP, Constraints, Bayesian Aggregation"
+    )
+
+    # Market selector
+    ti_markets_data, ti_markets_err = safe_get("/scoreboard?window=90d")
+    if ti_markets_err or ti_markets_data is None:
+        st.warning("Unable to load market list from API.")
+    else:
+        ti_items = ti_markets_data.get("items", [])
+        ti_market_ids = [item["market_id"] for item in ti_items if "market_id" in item]
+
+        if not ti_market_ids:
+            st.info("No markets available in scoreboard.")
+        else:
+            ti_selected = st.selectbox("Select market", ti_market_ids)
+
+            if ti_selected:
+                ti_data, ti_err = safe_get(f"/trust-intelligence/{ti_selected}")
+
+                if ti_err:
+                    st.warning(f"Trust Intelligence not available: {ti_err}")
+                elif ti_data is not None:
+                    # Trust Score Hero
+                    trust_score = ti_data.get("trust_score", 0)
+                    trust_v1 = ti_data.get("trust_score_v1")
+
+                    col_hero1, col_hero2, col_hero3 = st.columns(3)
+                    col_hero1.metric(
+                        "Trust Score (v3)",
+                        f"{trust_score:.2%}",
+                        delta=f"{(trust_score * 100 - trust_v1):.1f}" if trust_v1 else None,
+                        delta_color="normal",
+                    )
+                    col_hero2.metric(
+                        "Risk Category",
+                        ti_data.get("risk_category", "N/A"),
+                    )
+                    col_hero3.metric(
+                        "Calibration",
+                        ti_data.get("calibration_status", "N/A"),
+                    )
+
+                    if trust_v1 is not None:
+                        st.caption(f"v1 trust score: {trust_v1:.1f}/100")
+
+                    # Layer details in tabs
+                    tab_l1, tab_l3, tab_l4, tab_l5 = st.tabs([
+                        "L1: Uncertainty",
+                        "L3: SHAP Features",
+                        "L4: Constraints",
+                        "L5: Aggregation",
+                    ])
+
+                    with tab_l1:
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Entropy", f"{ti_data.get('entropy', 0):.4f}")
+                        c2.metric(
+                            "Normalized Uncertainty",
+                            f"{ti_data.get('normalized_uncertainty', 0):.4f}",
+                        )
+                        c3.metric(
+                            "Prediction Probability",
+                            f"{ti_data.get('prediction_probability', 0):.4f}",
+                        )
+
+                        # Conformal section
+                        st.subheader("L2: Conformal Prediction")
+                        cc1, cc2, cc3 = st.columns(3)
+                        cc1.metric("Method", ti_data.get("conformal_method", "none"))
+                        cc2.metric(
+                            "Interval",
+                            f"[{ti_data.get('conformal_p_low', 0):.3f}, {ti_data.get('conformal_p_high', 1):.3f}]",
+                        )
+                        cc3.metric(
+                            "Coverage Tightness",
+                            f"{ti_data.get('coverage_tightness', 0):.3f}",
+                        )
+
+                    with tab_l3:
+                        st.metric(
+                            "SHAP Stability",
+                            f"{ti_data.get('shap_stability', 0):.4f}",
+                        )
+                        st.caption(
+                            f"Iterations: {ti_data.get('shap_iterations', 0)}"
+                        )
+
+                        top_features = ti_data.get("top_features", [])
+                        if top_features:
+                            feat_df = pd.DataFrame(top_features)
+                            feat_df = feat_df.sort_values("rank")
+
+                            # Horizontal bar chart of SHAP values
+                            chart_df = feat_df[["feature_name", "shap_value"]].set_index(
+                                "feature_name"
+                            )
+                            st.bar_chart(chart_df)
+
+                            st.dataframe(
+                                feat_df[
+                                    ["rank", "feature_name", "shap_value", "direction"]
+                                ].reset_index(drop=True),
+                                use_container_width=True,
+                            )
+                        else:
+                            st.info("No SHAP features available.")
+
+                    with tab_l4:
+                        c1, c2 = st.columns(2)
+                        c1.metric(
+                            "Constraints Satisfied",
+                            "Yes" if ti_data.get("constraint_satisfied") else "No",
+                        )
+                        c2.metric(
+                            "Constraints Checked",
+                            ti_data.get("constraints_checked", 0),
+                        )
+
+                        violations = ti_data.get("violations", [])
+                        if violations:
+                            st.warning(f"{len(violations)} constraint violation(s)")
+                            viol_df = pd.DataFrame(violations)
+                            st.dataframe(viol_df, use_container_width=True)
+                        else:
+                            st.success("All constraints satisfied.")
+
+                    with tab_l5:
+                        c1, c2 = st.columns(2)
+                        c1.metric("ECE", f"{ti_data.get('ece', 0):.4f}")
+                        c2.metric("OCR", f"{ti_data.get('ocr', 0):.4f}")
+
+                        weights = ti_data.get("weights", {})
+                        comp_scores = ti_data.get("component_scores", {})
+
+                        if weights:
+                            st.subheader("Component Weights")
+                            w_df = pd.DataFrame(
+                                [
+                                    {"component": k, "weight": v}
+                                    for k, v in weights.items()
+                                ]
+                            )
+                            st.bar_chart(w_df.set_index("component"))
+
+                        if comp_scores:
+                            st.subheader("Component Scores")
+                            cs_df = pd.DataFrame(
+                                [
+                                    {"component": k, "score": v}
+                                    for k, v in comp_scores.items()
+                                ]
+                            )
+                            st.bar_chart(cs_df.set_index("component"))
+
+                    # Raw JSON expander
+                    with st.expander("Raw Pipeline Output", expanded=False):
+                        st.json(ti_data)

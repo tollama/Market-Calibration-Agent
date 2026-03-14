@@ -111,7 +111,22 @@ def build_trust_score_row(
     components: Mapping[str, object],
     weights: Mapping[str, object] | None = None,
     formula_version: str = "v1",
+    trust_intelligence_result: object | None = None,
 ) -> dict[str, object]:
+    # v3: delegate to Trust Intelligence Pipeline if available
+    if formula_version == "v3" and trust_intelligence_result is not None:
+        ti = trust_intelligence_result
+        return {
+            "market_id": market_id,
+            "ts": ts,
+            "trust_score": ti.trust.trust_score * 100,
+            "components": ti.trust.component_scores,
+            "weights": ti.trust.weights,
+            "formula_version": "v3",
+            "pipeline_result": ti.model_dump() if hasattr(ti, "model_dump") else {},
+        }
+
+    # v1 (default): existing weighted sum
     normalized_components = _normalize_components(components)
     normalized_weights = _normalize_weights(weights)
 

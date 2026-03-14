@@ -397,6 +397,19 @@ class LocalDerivedStore:
         return path.read_text(encoding="utf-8"), path
 
 
+    @property
+    def trust_intelligence_path(self) -> Path:
+        return self.derived_root / "trust_intelligence" / "results.json"
+
+    def load_trust_intelligence(self, market_id: str) -> dict[str, Any] | None:
+        """Load persisted Trust Intelligence Pipeline result for a market."""
+        records = _read_records(self.trust_intelligence_path)
+        for record in records:
+            if str(record.get("market_id", "")) == market_id:
+                return record
+        return None
+
+
 def get_derived_root() -> Path:
     return Path(os.getenv("DERIVED_DIR", "data/derived")).resolve()
 

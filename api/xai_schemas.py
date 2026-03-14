@@ -41,3 +41,63 @@ class TrustExplanationResponse(BaseModel):
     drift_evidence: Dict[str, Any] = Field(default_factory=dict)
     reason_codes: List[str] = Field(default_factory=list)
     narrative: List[str] = Field(default_factory=list)
+
+
+# ---- Trust Intelligence Pipeline v3.0 schemas ----
+
+
+class SHAPFeatureItem(BaseModel):
+    feature_name: str
+    shap_value: float
+    rank: int
+    direction: str
+
+
+class ConstraintViolationItem(BaseModel):
+    constraint_name: str
+    constraint_type: str
+    expected: str
+    actual: str
+    severity: str
+
+
+class TrustIntelligenceResponse(BaseModel):
+    """Full Trust Intelligence Pipeline v3.0 output for a market."""
+
+    market_id: str
+    pipeline_version: str = "3.0"
+    trust_score: float
+    trust_score_v1: Optional[float] = None
+
+    # L1: Uncertainty
+    entropy: float
+    normalized_uncertainty: float
+    prediction_probability: float
+
+    # L2: Conformal
+    conformal_method: str
+    conformal_p_low: float
+    conformal_p_high: float
+    coverage_validity: bool
+    coverage_tightness: float
+
+    # L3: SHAP
+    shap_stability: float
+    shap_iterations: int
+    top_features: List[SHAPFeatureItem] = Field(default_factory=list)
+
+    # L4: Constraints
+    constraint_satisfied: bool
+    risk_category: str
+    violations: List[ConstraintViolationItem] = Field(default_factory=list)
+    constraints_checked: int = 0
+
+    # L5: Aggregation
+    weights: Dict[str, float] = Field(default_factory=dict)
+    component_scores: Dict[str, float] = Field(default_factory=dict)
+    calibration_status: str = "well_calibrated"
+    ece: float = 0.0
+    ocr: float = 0.0
+
+    # Audit
+    chain_of_trust_entries: int = 0

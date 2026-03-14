@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 import pandas as pd
 
 from calibration.labeling import RESOLVED_FALSE, RESOLVED_TRUE
+from features.external_enrichment import ExternalEnrichmentConfig, enrich_with_external_features
 from features.market_templates import build_market_template_features
 
 _RESOLUTION_CANDIDATES = ("resolution_ts", "end_ts", "event_end_ts")
@@ -18,6 +19,7 @@ class ResolvedDatasetConfig:
     horizons_hours: tuple[int, ...] = (1, 6, 24, 72)
     time_col: str = "ts"
     include_template_features: bool = False
+    external_enrichment: ExternalEnrichmentConfig | None = None
 
 
 def build_resolved_training_dataset(
@@ -71,16 +73,27 @@ def build_resolved_training_dataset(
     dataset = pd.DataFrame.from_records(records)
     if dataset.empty:
         return dataset
-    return dataset.sort_values(["market_id", "horizon_hours", "snapshot_ts"]).reset_index(drop=True)
+    dataset = dataset.sort_values(["market_id", "horizon_hours", "snapshot_ts"]).reset_index(drop=True)
+    if cfg.external_enrichment is not None:
+        dataset = enrich_with_external_features(dataset, cfg.external_enrichment)
+    return dataset
 
 
 def stage_build_resolved_training_dataset(context: Any) -> dict[str, int]:
     source = context.state.get("feature_frame")
     if source is None:
+        source = context.state.get("features")
+    if source is None:
+        source = context.state.get("feature_rows")
+    if source is None:
         source = context.state.get("cutoff_snapshots")
     config = ResolvedDatasetConfig(
         horizons_hours=tuple(int(value) for value in context.state.get("resolved_dataset_horizons", (1, 6, 24, 72))),
         include_template_features=bool(context.state.get("include_template_features", False)),
+        external_enrichment=ExternalEnrichmentConfig(
+            news_csv_path=str(context.state.get("news_csv_path") or "") or None,
+            polls_csv_path=str(context.state.get("polls_csv_path") or "") or None,
+        ) if context.state.get("news_csv_path") or context.state.get("polls_csv_path") else None,
     )
     dataset = build_resolved_training_dataset(source if source is not None else [], config=config)
     context.state["resolved_training_dataset"] = dataset

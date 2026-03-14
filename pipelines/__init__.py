@@ -13,11 +13,15 @@ from typing import Any
 __all__ = [
     "DAILY_STAGE_NAMES",
     "ResolvedDatasetConfig",
+    "ResolvedLinearModel",
+    "ResolvedModelConfig",
     "WalkForwardConfig",
     "build_daily_stages",
     "build_resolved_training_dataset",
     "generate_backtest_report",
     "run_daily_job",
+    "scan_live_markets",
+    "train_resolved_model",
 ]
 
 
@@ -30,5 +34,11 @@ def __getattr__(name: str) -> Any:
         return getattr(module, name)
     if name in {"WalkForwardConfig", "generate_backtest_report"}:
         module = import_module("pipelines.generate_backtest_report")
+        return getattr(module, name)
+    if name in {"ResolvedLinearModel", "ResolvedModelConfig", "train_resolved_model"}:
+        module = import_module("pipelines.train_resolved_model")
+        return getattr(module, name)
+    if name == "scan_live_markets":
+        module = import_module("pipelines.scan_live_markets")
         return getattr(module, name)
     raise AttributeError(name)

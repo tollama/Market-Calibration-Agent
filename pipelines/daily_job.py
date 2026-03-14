@@ -7,6 +7,8 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import pandas as pd
+
 from calibration.metrics import base_rate_drift as _base_rate_drift_fn
 
 from .build_cutoff_snapshots import build_cutoff_snapshots, stage_build_cutoff_snapshots
@@ -146,6 +148,27 @@ except ModuleNotFoundError as exc:
         raise
     stage_build_features = _fallback_stage_build_features
 
+try:
+    from .build_resolved_training_dataset import stage_build_resolved_training_dataset
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.build_resolved_training_dataset", "build_resolved_training_dataset"}:
+        raise
+    stage_build_resolved_training_dataset = None  # type: ignore[assignment]
+
+try:
+    from .generate_backtest_report import generate_backtest_report
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.generate_backtest_report", "generate_backtest_report"}:
+        raise
+    generate_backtest_report = None  # type: ignore[assignment]
+
+try:
+    from .train_resolved_model import train_resolved_model
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pipelines.train_resolved_model", "train_resolved_model"}:
+        raise
+    train_resolved_model = None  # type: ignore[assignment]
+
 
 def _fallback_link_registry_to_snapshots(
     snapshot_rows: list[dict[str, Any]],
@@ -202,7 +225,7 @@ except ModuleNotFoundError as exc:
     if exc.name not in {"pipelines.trust_policy_loader", "trust_policy_loader"}:
         raise
     load_trust_weights = _fallback_load_trust_weights
-    load_trust_intelligence_config = lambda config_path=None: {"enabled": True, "trust_threshold": 0.3, "max_retries": 2, "persist_results": True, "audit": {"enabled": True, "agent_id": "mca-daily-pipeline"}}
+    load_trust_intelligence_config = lambda config_path=None: {"enabled": False, "trust_threshold": 0.3, "max_retries": 2, "persist_results": True, "audit": {"enabled": True, "agent_id": "mca-daily-pipeline"}}
 
 
 def _fallback_load_alert_thresholds(config_path: str | None = None) -> Any:
@@ -224,16 +247,14 @@ except ModuleNotFoundError as exc:
     load_alert_min_trust_score = _fallback_load_alert_min_trust_score
 
 
-try:
-    from calibration.trust_intelligence_adapter import (
-        HAS_TRUST_INTELLIGENCE,
-        run_trust_intelligence_for_market,
-    )
-except ImportError:
-    HAS_TRUST_INTELLIGENCE = False
+def _load_trust_intelligence_runtime() -> tuple[bool, Any]:
+    from importlib import import_module
 
-    def run_trust_intelligence_for_market(*args: Any, **kwargs: Any) -> None:
-        return None
+    module = import_module("calibration.trust_intelligence_adapter")
+    return bool(getattr(module, "HAS_TRUST_INTELLIGENCE", False)), getattr(
+        module,
+        "run_trust_intelligence_for_market",
+    )
 
 
 def _load_policy_with_optional_path(loader: Any, config_path: str | None) -> Any:
@@ -529,6 +550,9 @@ def _stage_features(context: PipelineRunContext) -> dict[str, Any]:
     output.setdefault("market_count", _count_items(context.state.get("market_ids")))
     if "feature_count" not in output:
         output["feature_count"] = _count_items(feature_rows)
+    if context.state.get("build_resolved_dataset") and stage_build_resolved_training_dataset is not None:
+        dataset_output = dict(stage_build_resolved_training_dataset(context))
+        output.setdefault("resolved_dataset_count", int(dataset_output.get("row_count", 0)))
     return output
 
 
@@ -640,6 +664,30 @@ def _stage_metrics(context: PipelineRunContext) -> dict[str, Any]:
     output.setdefault("alert_count", _count_items(context.state.get("alert_feed_rows")))
     output.setdefault("trust_policy_loaded", bool(context.state.get("trust_policy_loaded")))
     output.setdefault("alert_policy_loaded", bool(context.state.get("alert_policy_loaded")))
+    if context.state.get("train_resolved_model") and train_resolved_model is not None:
+        dataset = context.state.get("resolved_training_dataset")
+        if isinstance(dataset, pd.DataFrame) and not dataset.empty:
+            _, predictions, model_summary = train_resolved_model(dataset)
+            context.state["resolved_model_predictions"] = predictions
+            context.state["resolved_model_summary"] = model_summary
+            output.setdefault("resolved_model_rows", int(len(predictions)))
+        else:
+            output.setdefault("resolved_model_rows", 0)
+    if context.state.get("backtest_report_dir") and generate_backtest_report is not None:
+        rows_for_report = context.state.get("resolved_model_predictions")
+        if isinstance(rows_for_report, pd.DataFrame) and not rows_for_report.empty:
+            report_summary = generate_backtest_report(
+                rows_for_report,
+                report_dir=str(context.state["backtest_report_dir"]),
+                prediction_columns={
+                    "market": "baseline_pred",
+                    "primary": "pred",
+                    "recalibrated": "recalibrated_pred",
+                },
+                walk_forward=None,
+            )
+            context.state["backtest_report_summary"] = report_summary
+            output.setdefault("backtest_report_rows", int(report_summary.get("row_count", 0)))
     return output
 
 
@@ -664,7 +712,8 @@ def _stage_trust_intelligence(context: PipelineRunContext) -> dict[str, Any]:
         ti_config = {}
     context.state["ti_config"] = ti_config
 
-    ti_enabled = ti_config.get("enabled", True)
+    explicit_enable = context.state.get("enable_trust_intelligence")
+    ti_enabled = bool(explicit_enable) if explicit_enable is not None else False
 
     if not ti_enabled:
         context.state["trust_intelligence_results"] = {}
@@ -674,7 +723,13 @@ def _stage_trust_intelligence(context: PipelineRunContext) -> dict[str, Any]:
             market_count=0,
         )
 
-    if not HAS_TRUST_INTELLIGENCE:
+    try:
+        has_trust_intelligence, run_trust_intelligence_for_market = _load_trust_intelligence_runtime()
+    except Exception:
+        has_trust_intelligence = False
+        run_trust_intelligence_for_market = lambda *args, **kwargs: None
+
+    if not has_trust_intelligence:
         context.state["trust_intelligence_results"] = {}
         return _fallback_stage_output(
             "trust_intelligence",
@@ -1330,6 +1385,7 @@ def _run_daily_stages(
 def run_daily_job(
     *,
     run_id: Optional[str] = None,
+    state: Mapping[str, Any] | None = None,
     data_interval_start: Optional[str] = None,
     data_interval_end: Optional[str] = None,
     checkpoint_path: str | None = None,
@@ -1347,6 +1403,8 @@ def run_daily_job(
         data_interval_start=data_interval_start,
         data_interval_end=data_interval_end,
     )
+    if state is not None:
+        context.state.update(dict(state))
     context.state["trust_config_path"] = trust_config_path
     context.state["alert_config_path"] = alert_config_path
     if backfill_days > 0:

@@ -165,7 +165,7 @@ class TrustScoreExplainer:
         """
         return {
             "signal_type": "prediction_market",
-            "source": market_data.get("source", "polymarket"),
+            "source": market_data.get("source", market_data.get("platform", "polymarket")),
             "market_id": market_data.get("market_id", ""),
             "probability": market_data.get("current_probability", 0.0),
             "trust_score": trust_explanation.get("trust_score", 0.0),

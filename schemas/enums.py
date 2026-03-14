@@ -29,6 +29,13 @@ class DataSource(StringEnum):
     WEBSOCKET = "websocket"
 
 
+class Platform(StringEnum):
+    POLYMARKET = "polymarket"
+    KALSHI = "kalshi"
+    MANIFOLD = "manifold"
+    METACULUS = "metaculus"
+
+
 class TriggerEventType(StringEnum):
     ELECTION = "ELECTION"
     CPI = "CPI"

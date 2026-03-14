@@ -16,6 +16,7 @@ from .enums import (
     ForecastMethod,
     LiquidityBucket,
     MarketStatus,
+    Platform,
     TriggerEventType,
 )
 from .market_registry import MarketRegistry
@@ -34,6 +35,7 @@ __all__ = [
     "MarketRegistry",
     "MarketSnapshot",
     "MarketStatus",
+    "Platform",
     "QuestionQuality",
     "TriggerEvent",
     "TriggerEventType",

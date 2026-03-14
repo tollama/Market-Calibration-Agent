@@ -55,6 +55,34 @@ trust_intelligence:
     enabled: true
     agent_id: mca-daily-pipeline
 
+platforms:
+  polymarket:
+    enabled: true
+    connector: gamma
+    base_url: "https://gamma-api.polymarket.com"
+    max_retries: 3
+    backoff_base: 0.5
+    rate_limit_rps: null
+    websocket:
+      enabled: true
+      url: "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+  kalshi:
+    enabled: false
+    connector: kalshi
+    base_url: "https://trading-api.kalshi.com/trade-api/v2"
+    api_key_id_env: "KALSHI_API_KEY_ID"
+    api_key_secret_env: "KALSHI_API_KEY_SECRET"
+    max_retries: 3
+    websocket:
+      enabled: false
+  manifold:
+    enabled: false
+    connector: manifold
+    base_url: "https://api.manifold.markets/v0"
+    max_retries: 3
+    websocket:
+      enabled: false
+
 api:
   tsfm_forecast:
     require_auth: true

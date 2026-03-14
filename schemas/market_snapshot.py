@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .enums import DataSource, LiquidityBucket
+from .enums import DataSource, LiquidityBucket, Platform
 
 
 class MarketSnapshot(BaseModel):
@@ -21,6 +21,7 @@ class MarketSnapshot(BaseModel):
     liquidity_bucket: LiquidityBucket
     tte_seconds: int = Field(ge=0)
     data_source: list[DataSource] = Field(min_length=1, max_length=3)
+    platform: Platform = Field(default=Platform.POLYMARKET)
 
     @field_validator("ts")
     @classmethod

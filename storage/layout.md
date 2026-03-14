@@ -25,6 +25,17 @@ All data is stored under a single root directory.
 
 This dual-write behavior preserves existing readers while aligning with PRD wording.
 
+### Multi-platform raw ingest layout
+
+`pipelines/ingest_platform_raw.py` writes platform-specific partitions:
+
+- `raw/kalshi/dt=YYYY-MM-DD/{markets,events}.jsonl`
+- `raw/manifold/dt=YYYY-MM-DD/{markets,events}.jsonl`
+
+Each platform connector writes to its own namespace under `raw/`. The Polymarket
+data continues to be written under `raw/gamma/` via `ingest_gamma_raw` for backward
+compatibility.
+
 ## Partition rule
 
 - Partition key: `dt`

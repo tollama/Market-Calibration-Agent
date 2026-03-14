@@ -243,6 +243,7 @@ def get_scoreboard(
     tag: Optional[str] = Query(default=None),
     liquidity_bucket: Optional[str] = Query(default=None),
     min_trust_score: Optional[float] = Query(default=None),
+    platform: Optional[str] = Query(default=None),
     store: LocalDerivedStore = Depends(get_derived_store),
 ) -> ScoreboardResponse:
     try:
@@ -252,6 +253,8 @@ def get_scoreboard(
 
     records = store.load_scoreboard(window=window)
 
+    if platform:
+        records = [record for record in records if record.get("platform", "polymarket") == platform]
     if tag:
         records = [record for record in records if record.get("category") == tag]
     if liquidity_bucket:
@@ -462,8 +465,13 @@ def _build_ti_response(
 
 
 @app.get("/markets", response_model=MarketsResponse)
-def get_markets(store: LocalDerivedStore = Depends(get_derived_store)) -> MarketsResponse:
+def get_markets(
+    platform: Optional[str] = Query(default=None),
+    store: LocalDerivedStore = Depends(get_derived_store),
+) -> MarketsResponse:
     items = store.load_markets()
+    if platform:
+        items = [m for m in items if m.get("platform", "polymarket") == platform]
     return MarketsResponse(items=items, total=len(items))
 
 

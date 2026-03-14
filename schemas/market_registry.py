@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .enums import MarketStatus
+from .enums import MarketStatus, Platform
 
 
 class MarketRegistry(BaseModel):
@@ -27,6 +27,7 @@ class MarketRegistry(BaseModel):
     start_ts: datetime
     end_ts: datetime
     status: MarketStatus
+    platform: Platform = Field(default=Platform.POLYMARKET)
 
     @field_validator("category_tags", mode="after")
     @classmethod

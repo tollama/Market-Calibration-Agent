@@ -44,6 +44,16 @@ trust_score:
     oi_spike_threshold: 0.30
     velocity_spike_threshold: 3.0
 
+trust_intelligence:
+  enabled: true
+  formula_version: v3
+  trust_threshold: 0.3
+  max_retries: 2
+  persist_results: true
+  audit:
+    enabled: true
+    agent_id: mca-daily-pipeline
+
 api:
   tsfm_forecast:
     require_auth: true

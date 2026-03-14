@@ -96,4 +96,51 @@ def _as_finite_float(value: object, *, name: str) -> float:
     return number
 
 
-__all__ = ["load_trust_weights"]
+_DEFAULT_TI_CONFIG: dict[str, object] = {
+    "enabled": True,
+    "formula_version": "v3",
+    "trust_threshold": 0.3,
+    "max_retries": 2,
+    "persist_results": True,
+    "audit": {
+        "enabled": True,
+        "agent_id": "mca-daily-pipeline",
+    },
+}
+
+
+def load_trust_intelligence_config(
+    config_path: str | Path | None = None,
+) -> dict[str, object]:
+    """Load Trust Intelligence Pipeline configuration from YAML."""
+    resolved_path = _DEFAULT_CONFIG_PATH if config_path is None else Path(config_path)
+    if not resolved_path.exists():
+        return dict(_DEFAULT_TI_CONFIG)
+
+    with resolved_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle)
+
+    if not isinstance(payload, Mapping):
+        return dict(_DEFAULT_TI_CONFIG)
+
+    ti_section = payload.get("trust_intelligence")
+    if not isinstance(ti_section, Mapping):
+        return dict(_DEFAULT_TI_CONFIG)
+
+    config = dict(_DEFAULT_TI_CONFIG)
+    for key in ("enabled", "formula_version", "trust_threshold", "max_retries", "persist_results"):
+        if key in ti_section:
+            config[key] = ti_section[key]
+
+    audit = ti_section.get("audit")
+    if isinstance(audit, Mapping):
+        default_audit = dict(_DEFAULT_TI_CONFIG["audit"])
+        for key in ("enabled", "agent_id"):
+            if key in audit:
+                default_audit[key] = audit[key]
+        config["audit"] = default_audit
+
+    return config
+
+
+__all__ = ["load_trust_weights", "load_trust_intelligence_config"]

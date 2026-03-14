@@ -197,11 +197,12 @@ def _fallback_load_trust_weights(config_path: str | None = None) -> Mapping[str,
 
 
 try:
-    from .trust_policy_loader import load_trust_weights
+    from .trust_policy_loader import load_trust_weights, load_trust_intelligence_config
 except ModuleNotFoundError as exc:
     if exc.name not in {"pipelines.trust_policy_loader", "trust_policy_loader"}:
         raise
     load_trust_weights = _fallback_load_trust_weights
+    load_trust_intelligence_config = lambda config_path=None: {"enabled": True, "trust_threshold": 0.3, "max_retries": 2, "persist_results": True, "audit": {"enabled": True, "agent_id": "mca-daily-pipeline"}}
 
 
 def _fallback_load_alert_thresholds(config_path: str | None = None) -> Any:
@@ -648,7 +649,31 @@ def _stage_trust_intelligence(context: PipelineRunContext) -> dict[str, Any]:
     Reads scoreboard rows produced by the metrics stage and runs the full
     L1-L5 pipeline per market. Results are stored in
     ``context.state["trust_intelligence_results"]`` keyed by market_id.
+
+    Behaviour is controlled by the ``trust_intelligence`` section of the
+    YAML config (see ``configs/default.yaml``).
     """
+    # Load TI config
+    trust_config_path_raw = context.state.get("trust_config_path")
+    trust_config_path = str(trust_config_path_raw) if trust_config_path_raw is not None else None
+    try:
+        ti_config = _load_policy_with_optional_path(load_trust_intelligence_config, trust_config_path)
+        if ti_config is None:
+            ti_config = {}
+    except Exception:
+        ti_config = {}
+    context.state["ti_config"] = ti_config
+
+    ti_enabled = ti_config.get("enabled", True)
+
+    if not ti_enabled:
+        context.state["trust_intelligence_results"] = {}
+        return _fallback_stage_output(
+            "trust_intelligence",
+            "trust_intelligence disabled in config",
+            market_count=0,
+        )
+
     if not HAS_TRUST_INTELLIGENCE:
         context.state["trust_intelligence_results"] = {}
         return _fallback_stage_output(
@@ -684,12 +709,16 @@ def _stage_trust_intelligence(context: PipelineRunContext) -> dict[str, Any]:
         if mid:
             market_feature_rows.setdefault(mid, []).append(row)
 
-    # Initialize pipeline once for all markets
+    # Initialize pipeline from config
+    audit_config = ti_config.get("audit") or {}
+    audit_enabled = audit_config.get("enabled", True) if isinstance(audit_config, dict) else True
+    agent_id = audit_config.get("agent_id", "mca-daily-pipeline") if isinstance(audit_config, dict) else "mca-daily-pipeline"
+
     try:
         from trust_intelligence.pipeline.trust_pipeline import TrustIntelligencePipeline
         from trust_intelligence.audit.chain_of_trust import ChainOfTrustLogger
 
-        audit_logger = ChainOfTrustLogger(agent_id="mca-daily-pipeline")
+        audit_logger = ChainOfTrustLogger(agent_id=agent_id) if audit_enabled else None
         pipeline = TrustIntelligencePipeline(audit_logger=audit_logger)
     except Exception:
         context.state["trust_intelligence_results"] = {}
@@ -738,6 +767,7 @@ def _stage_trust_intelligence(context: PipelineRunContext) -> dict[str, Any]:
         "market_count": len(scoreboard_rows),
         "succeeded": succeeded,
         "failed": failed,
+        "config_loaded": bool(ti_config),
     }
 
 
@@ -905,6 +935,17 @@ def _stage_publish(context: PipelineRunContext) -> dict[str, Any]:
                 )
             if postmortem_payload is not None:
                 context.state["postmortem_artifacts"] = postmortem_payload
+
+        # Persist Trust Intelligence Pipeline results
+        ti_results = context.state.get("trust_intelligence_results")
+        ti_config = context.state.get("ti_config") or {}
+        ti_persist = ti_config.get("persist_results", True)
+        ti_written = 0
+        if ti_persist and isinstance(ti_results, dict) and ti_results:
+            ti_root = context.state.get("root_path") or "."
+            ti_written = _write_trust_intelligence_results(ti_results, root=ti_root)
+        context.state["ti_written_count"] = ti_written
+
         output = {}
     else:
         output = dict(hook(context))
@@ -923,7 +964,42 @@ def _stage_publish(context: PipelineRunContext) -> dict[str, Any]:
     output.setdefault("postmortem_written_count", postmortem_written_count)
     output.setdefault("postmortem_skipped_count", postmortem_skipped_count)
     output.setdefault("published_count", _count_items(context.state.get("published_records")))
+    output.setdefault("ti_written_count", _to_int(context.state.get("ti_written_count")))
     return output
+
+
+def _write_trust_intelligence_results(
+    results: dict[str, Any],
+    *,
+    root: str,
+) -> int:
+    """Persist Trust Intelligence Pipeline results to JSON."""
+    import json
+    from pathlib import Path
+
+    root_path = Path(root)
+    ti_dir = root_path / "data" / "derived" / "trust_intelligence"
+    ti_dir.mkdir(parents=True, exist_ok=True)
+    output_path = ti_dir / "results.json"
+
+    rows: list[dict[str, Any]] = []
+    for market_id, ti_result in results.items():
+        if ti_result is None:
+            continue
+        model_dump = getattr(ti_result, "model_dump", None)
+        if callable(model_dump):
+            row = model_dump()
+        elif isinstance(ti_result, Mapping):
+            row = dict(ti_result)
+        else:
+            continue
+        row["market_id"] = market_id
+        rows.append(row)
+
+    if rows:
+        output_path.write_text(json.dumps(rows, default=str), encoding="utf-8")
+
+    return len(rows)
 
 
 def build_daily_stages() -> list[PipelineStage]:

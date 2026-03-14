@@ -176,3 +176,77 @@ class AuditTrailResponse(BaseModel):
     entries: List[AuditTrailEntry] = Field(default_factory=list)
     total: int = 0
     chain_valid: bool = True
+
+
+# ---- Orchestrated Trust Intelligence API schemas ----
+
+
+class OrchestratedTrustRequest(BaseModel):
+    """Request for orchestrated trust intelligence with re-evaluation."""
+
+    prediction_probability: float = Field(ge=0.0, le=1.0)
+    features: Optional[Dict[str, float]] = None
+    context: Optional[Dict[str, Any]] = None
+    constraints: Optional[List[Dict[str, Any]]] = None
+    confidence_level: float = Field(default=0.9, ge=0.0, le=1.0)
+    trust_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    max_retries: int = Field(default=3, ge=0, le=10)
+
+
+class ReEvaluationAttemptItem(BaseModel):
+    """Record of a single re-evaluation attempt."""
+
+    attempt: int
+    strategy: str
+    trust_score: float
+    recovered: bool
+    adjustments: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OrchestratedTrustResponse(BaseModel):
+    """Response from orchestrated trust intelligence."""
+
+    trust_score: float
+    needs_escalation: bool
+    was_retried: bool
+    total_attempts: int
+    attempts: List[ReEvaluationAttemptItem] = Field(default_factory=list)
+    binding_constraints: List[str] = Field(default_factory=list)
+    pipeline_result: TrustIntelligenceResponse
+
+
+# ---- Model Card and Compliance API schemas ----
+
+
+class ModelCardRequest(BaseModel):
+    """Request for trust intelligence model card generation."""
+
+    model_info: Optional[Dict[str, Any]] = None
+    include_pipeline_result: bool = Field(
+        default=True,
+        description="Run pipeline to populate model card with live data",
+    )
+    prediction_probability: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    format: str = Field(default="json", description="Output format: json or markdown")
+
+
+class ModelCardResponse(BaseModel):
+    """Model card response."""
+
+    model_card: Optional[Dict[str, Any]] = None
+    markdown: Optional[str] = None
+    format: str = "json"
+
+
+class ComplianceReportRequest(BaseModel):
+    """Request for compliance report generation."""
+
+    vertical: str = Field(default="general", description="Industry vertical")
+    report_period: Optional[str] = None
+    limit: int = Field(default=100, ge=1, le=10000)
+
+
+class ComplianceReportResponse(BaseModel):
+    """Compliance report response."""
+
+    report: Dict[str, Any] = Field(default_factory=dict)

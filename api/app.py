@@ -69,6 +69,13 @@ from .xai_schemas import (
     ConstraintVerifyBatchResponse,
     AuditTrailEntry,
     AuditTrailResponse,
+    OrchestratedTrustRequest,
+    OrchestratedTrustResponse,
+    ReEvaluationAttemptItem,
+    ModelCardRequest,
+    ModelCardResponse,
+    ComplianceReportRequest,
+    ComplianceReportResponse,
 )
 from runners.tsfm_service import TSFMRunnerService, TSFMServiceInputError
 
@@ -933,6 +940,196 @@ def get_audit_trail_all(
         total=total,
         chain_valid=chain_valid,
     )
+
+
+# ---- XAI v3 Orchestrated Trust Intelligence ----
+
+
+def _pipeline_result_to_api(result, market_id: str = "api") -> TrustIntelligenceResponse:
+    """Convert a PipelineResult to the API response schema."""
+    top_features = [
+        SHAPFeatureItem(
+            feature_name=fc.feature_name,
+            shap_value=fc.shap_value,
+            rank=fc.rank,
+            direction=fc.direction,
+        )
+        for fc in result.shap.feature_contributions[:5]
+    ]
+    violations = [
+        ConstraintViolationItem(
+            constraint_name=v.constraint_name,
+            constraint_type=v.constraint_type,
+            expected=v.expected,
+            actual=v.actual,
+            severity=v.severity,
+        )
+        for v in result.constraints.violations
+    ]
+    return TrustIntelligenceResponse(
+        market_id=market_id,
+        pipeline_version=result.pipeline_version,
+        trust_score=result.trust.trust_score,
+        entropy=result.uncertainty.entropy,
+        normalized_uncertainty=result.uncertainty.normalized_uncertainty,
+        prediction_probability=result.uncertainty.prediction_probability,
+        conformal_method=result.conformal.method,
+        conformal_p_low=result.conformal.p_low,
+        conformal_p_high=result.conformal.p_high,
+        coverage_validity=result.conformal.coverage_validity,
+        coverage_tightness=result.conformal.coverage_tightness,
+        shap_stability=result.shap.shap_stability,
+        shap_iterations=result.shap.iterations_used,
+        top_features=top_features,
+        constraint_satisfied=result.constraints.constraint_satisfied,
+        risk_category=result.constraints.risk_category.value,
+        violations=violations,
+        constraints_checked=result.constraints.constraints_checked,
+        weights=result.trust.weights,
+        component_scores=result.trust.component_scores,
+        calibration_status=result.trust.calibration_status,
+        ece=result.trust.ece,
+        ocr=result.trust.ocr,
+        chain_of_trust_entries=len(result.chain_of_trust),
+    )
+
+
+@app.post("/api/xai/v3/trust-intelligence-orchestrated", response_model=OrchestratedTrustResponse)
+def post_orchestrated_trust(payload: OrchestratedTrustRequest) -> OrchestratedTrustResponse:
+    """Run orchestrated trust intelligence with re-evaluation loop.
+
+    When trust_score falls below threshold, automatically retries with
+    different strategies (widen conformal, extra SHAP, relax constraints).
+    """
+    try:
+        from trust_intelligence.pipeline.trust_pipeline import TrustIntelligencePipeline
+        from trust_intelligence.pipeline.orchestrator import TrustAwareOrchestrator
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    pipeline = TrustIntelligencePipeline()
+    orchestrator = TrustAwareOrchestrator(
+        pipeline,
+        trust_threshold=payload.trust_threshold,
+        max_retries=payload.max_retries,
+    )
+
+    orch_result = orchestrator.evaluate_with_history(
+        prediction_probability=payload.prediction_probability,
+        features=payload.features,
+        context=payload.context,
+        constraints=payload.constraints,
+        confidence_level=payload.confidence_level,
+    )
+
+    api_pipeline = _pipeline_result_to_api(orch_result.result)
+
+    attempts = [
+        ReEvaluationAttemptItem(
+            attempt=a.attempt,
+            strategy=a.strategy.value,
+            trust_score=a.trust_score,
+            recovered=a.recovered,
+            adjustments=a.adjustments,
+        )
+        for a in orch_result.attempts
+    ]
+
+    return OrchestratedTrustResponse(
+        trust_score=orch_result.result.trust.trust_score,
+        needs_escalation=orch_result.needs_escalation,
+        was_retried=orch_result.was_retried,
+        total_attempts=orch_result.total_attempts,
+        attempts=attempts,
+        binding_constraints=orch_result.binding_constraints,
+        pipeline_result=api_pipeline,
+    )
+
+
+# ---- XAI v3 Model Card ----
+
+
+@app.post("/api/xai/v3/model-card", response_model=ModelCardResponse)
+def post_model_card(payload: ModelCardRequest) -> ModelCardResponse:
+    """Generate a Trust Intelligence Model Card (EU AI Act compliant)."""
+    try:
+        from trust_intelligence.compliance.model_card import TrustIntelligenceModelCard
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    generator = TrustIntelligenceModelCard()
+    pipeline_result = None
+
+    if payload.include_pipeline_result and payload.prediction_probability is not None:
+        try:
+            from trust_intelligence.pipeline.trust_pipeline import TrustIntelligencePipeline
+            pipeline = TrustIntelligencePipeline()
+            pipeline_result = pipeline.run(
+                prediction_probability=payload.prediction_probability,
+            )
+        except ImportError:
+            pass
+
+    card = generator.generate(
+        pipeline_result=pipeline_result,
+        model_info=payload.model_info,
+    )
+
+    if payload.format == "markdown":
+        return ModelCardResponse(
+            markdown=generator.to_markdown(card),
+            format="markdown",
+        )
+
+    return ModelCardResponse(model_card=card, format="json")
+
+
+# ---- XAI v3 Compliance Report ----
+
+
+@app.post("/api/xai/v3/compliance-report", response_model=ComplianceReportResponse)
+def post_compliance_report(payload: ComplianceReportRequest) -> ComplianceReportResponse:
+    """Generate a compliance report from audit trail data."""
+    try:
+        from trust_intelligence.compliance.report_generator import ComplianceReportGenerator
+        from trust_intelligence.audit.chain_of_trust import (
+            load_audit_trail,
+            verify_chain_entries,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="trust_intelligence package not installed",
+        )
+
+    try:
+        generator = ComplianceReportGenerator(vertical=payload.vertical)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    entries = []
+    chain_valid = True
+    if _AUDIT_LOG_PATH.exists():
+        try:
+            entries = load_audit_trail(_AUDIT_LOG_PATH, verify=False)
+            chain_valid = verify_chain_entries(entries)
+            entries = entries[-payload.limit:]
+        except FileNotFoundError:
+            pass
+
+    report = generator.generate(
+        audit_entries=entries if entries else None,
+        chain_valid=chain_valid,
+        report_period=payload.report_period,
+    )
+
+    return ComplianceReportResponse(report=report)
 
 
 @app.get("/metrics", response_class=PlainTextResponse)

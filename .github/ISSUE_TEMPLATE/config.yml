@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Forecasting Improvement Issue Pack
+    url: https://github.com/tollama/Market-Calibration-Agent/blob/main/docs/ops/forecasting-improvement-issue-templates.md
+    about: Use the forecasting improvement issue pack for the full prediction-market backlog and dependency order.

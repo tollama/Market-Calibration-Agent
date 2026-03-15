@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+import pytest
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "pipelines" / "build_feature_frame.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("build_feature_frame", MODULE_PATH)
@@ -49,14 +50,37 @@ def test_stage_build_features_builds_expected_feature_columns() -> None:
     for required_column in (
         "returns",
         "vol",
+        "returns_3",
+        "vol_3",
+        "price_acceleration",
+        "reversal_signal",
         "volume_velocity",
+        "volume_acceleration",
         "oi_change",
+        "oi_acceleration",
+        "gap_minutes",
+        "stale_gap_flag",
         "tte_seconds",
+        "tte_hours",
+        "tte_bucket",
+        "price_distance_mid",
         "liquidity_bucket",
+        "event_market_count",
+        "event_consensus_p_yes",
+        "event_disagreement_abs",
+        "event_price_dispersion",
+        "cross_platform_count",
+        "cross_platform_disagreement_abs",
+        "event_relative_rank",
     ):
         assert required_column in feature_frame.columns
 
     assert feature_frame["liquidity_bucket"].tolist() == ["LOW", "MID", "HIGH"]
+    shared = feature_frame.loc[feature_frame["event_id"] == "evt-shared"].sort_values(["market_id", "ts"]).reset_index(drop=True)
+    assert shared["event_market_count"].tolist() == [2, 2]
+    assert shared["event_consensus_p_yes"].tolist() == pytest.approx([0.45, 0.45])
+    assert shared["event_disagreement_abs"].tolist() == pytest.approx([0.05, 0.05])
+    assert shared["cross_platform_count"].tolist() == [2, 2]
 
 
 def test_stage_build_features_applies_custom_thresholds_from_config_file(tmp_path: Path) -> None:
@@ -138,6 +162,8 @@ def _default_snapshot_rows() -> list[dict[str, object]]:
     return [
         {
             "market_id": "mkt-a",
+            "event_id": "evt-shared",
+            "platform": "polymarket",
             "ts": "2026-02-20T00:00:00Z",
             "p_yes": 0.50,
             "volume_24h": 9_000.0,
@@ -146,6 +172,8 @@ def _default_snapshot_rows() -> list[dict[str, object]]:
         },
         {
             "market_id": "mkt-a",
+            "event_id": "evt-a",
+            "platform": "polymarket",
             "ts": "2026-02-20T00:10:00Z",
             "p_yes": 0.55,
             "volume_24h": 12_000.0,
@@ -154,6 +182,8 @@ def _default_snapshot_rows() -> list[dict[str, object]]:
         },
         {
             "market_id": "mkt-b",
+            "event_id": "evt-shared",
+            "platform": "kalshi",
             "ts": "2026-02-20T00:00:00Z",
             "p_yes": 0.40,
             "volume_24h": 130_000.0,

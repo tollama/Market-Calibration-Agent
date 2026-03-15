@@ -1,7 +1,7 @@
-# Feature Specs v1.1 (MCA → single-app)
+# Feature Specs v1.2 (MCA → single-app)
 
-> 목적: PRD1 기반 핵심 6개 피처에 대해 **정확한 컬럼 스키마**, **백테스트 지표**, **Go/No-Go 채택 기준**을 표준화한다.
-> 범위: `features/build_features.py`에서 계산되는 피처 중 v1.1 우선 이관 대상 6개 (`returns`, `vol`, `volume_velocity`, `oi_change`, `tte_seconds`, `liquidity_bucket`).
+> 목적: PRD1 기반 핵심 feature와 prediction-market 확장 feature에 대해 **정확한 컬럼 스키마**, **백테스트 지표**, **Go/No-Go 채택 기준**을 표준화한다.
+> 범위: `features/build_features.py`의 핵심 피처와 v1.2 확장 피처 (`returns_3`, `returns_6`, `vol_3`, `vol_12`, `price_acceleration`, `reversal_signal`, `volume_acceleration`, `oi_acceleration`, `gap_minutes`, `stale_gap_flag`, `tte_hours`, `tte_bucket`, `price_distance_mid`) 및 event-level feature frame 확장 (`event_consensus_p_yes`, `event_disagreement_abs`, `event_price_dispersion`, `cross_platform_disagreement_abs`, `event_relative_rank`).
 
 ---
 

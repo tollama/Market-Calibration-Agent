@@ -4,6 +4,8 @@ import pandas as pd
 
 from pipelines.train_resolved_model import (
     ResolvedLinearModel,
+    ResolvedModelConfig,
+    run_feature_ablation,
     train_resolved_model,
 )
 
@@ -53,3 +55,36 @@ def test_resolved_linear_model_round_trip(tmp_path: Path) -> None:
     preds = loaded.predict_frame(_training_rows())
     assert preds["pred"].between(0, 1).all()
 
+
+def test_train_resolved_model_supports_residual_target_mode() -> None:
+    model, predictions, summary = train_resolved_model(
+        _training_rows(),
+        model_config=ResolvedModelConfig(target_mode="residual", use_horizon_interactions=True),
+    )
+
+    assert isinstance(model, ResolvedLinearModel)
+    assert summary["target_mode"] == "residual"
+    assert summary["brier_baseline"] >= 0
+    assert set(predictions.columns) >= {"model_output", "pred", "baseline_pred", "recalibrated_pred", "target_mode"}
+    assert predictions["target_mode"].nunique() == 1
+    assert predictions["target_mode"].iloc[0] == "residual"
+    assert predictions["pred"].between(0, 1).all()
+
+
+def test_run_feature_ablation_returns_group_comparison_rows() -> None:
+    ablation = run_feature_ablation(
+        _training_rows(),
+        model_config=ResolvedModelConfig(target_mode="residual", use_horizon_interactions=True),
+    )
+
+    assert not ablation.empty
+    assert "all_features" in set(ablation["feature_group"])
+    assert any(str(value).startswith("drop:") for value in ablation["feature_group"])
+    assert set(ablation.columns) >= {
+        "feature_group",
+        "feature_count",
+        "brier_model",
+        "brier_blended",
+        "brier_baseline",
+        "target_mode",
+    }

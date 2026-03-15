@@ -9,10 +9,23 @@ import pandas as pd
 
 _FEATURE_COLUMNS = [
     "returns",
+    "returns_3",
+    "returns_6",
     "vol",
+    "vol_3",
+    "vol_12",
+    "price_acceleration",
+    "reversal_signal",
     "volume_velocity",
+    "volume_acceleration",
     "oi_change",
+    "oi_acceleration",
+    "gap_minutes",
+    "stale_gap_flag",
     "tte_seconds",
+    "tte_hours",
+    "tte_bucket",
+    "price_distance_mid",
     "liquidity_bucket",
     "liquidity_bucket_id",
 ]
@@ -61,6 +74,14 @@ def build_features(
     prev_price = grouped[price_col].shift(1)
     returns = (frame[price_col] - prev_price) / prev_price.where(prev_price != 0)
     frame["returns"] = _clean_numeric(returns, fill_value=0.0)
+    frame["returns_3"] = _clean_numeric(
+        (frame[price_col] - grouped[price_col].shift(3)) / grouped[price_col].shift(3).where(grouped[price_col].shift(3) != 0),
+        fill_value=0.0,
+    )
+    frame["returns_6"] = _clean_numeric(
+        (frame[price_col] - grouped[price_col].shift(6)) / grouped[price_col].shift(6).where(grouped[price_col].shift(6) != 0),
+        fill_value=0.0,
+    )
 
     rolling_vol = (
         frame.groupby(market_col, sort=False)["returns"]
@@ -69,6 +90,26 @@ def build_features(
         .reset_index(level=0, drop=True)
     )
     frame["vol"] = _clean_numeric(rolling_vol, fill_value=0.0)
+    frame["vol_3"] = _clean_numeric(
+        frame.groupby(market_col, sort=False)["returns"]
+        .rolling(window=3, min_periods=2)
+        .std(ddof=0)
+        .reset_index(level=0, drop=True),
+        fill_value=0.0,
+    )
+    frame["vol_12"] = _clean_numeric(
+        frame.groupby(market_col, sort=False)["returns"]
+        .rolling(window=12, min_periods=2)
+        .std(ddof=0)
+        .reset_index(level=0, drop=True),
+        fill_value=0.0,
+    )
+    prev_returns = grouped["returns"].shift(1)
+    frame["price_acceleration"] = _clean_numeric(frame["returns"] - prev_returns, fill_value=0.0)
+    frame["reversal_signal"] = _clean_numeric(
+        np.where(frame["returns"] * prev_returns < 0, frame["returns"].abs() + prev_returns.abs(), 0.0),
+        fill_value=0.0,
+    )
 
     prev_volume = grouped[volume_col].shift(1)
     delta_volume = frame[volume_col] - prev_volume
@@ -76,12 +117,21 @@ def build_features(
     delta_seconds = (frame[ts_col] - prev_ts).dt.total_seconds()
     volume_velocity = delta_volume / delta_seconds.where(delta_seconds > 0)
     frame["volume_velocity"] = _clean_numeric(volume_velocity, fill_value=0.0)
+    prev_volume_velocity = grouped["volume_velocity"].shift(1)
+    frame["volume_acceleration"] = _clean_numeric(
+        frame["volume_velocity"] - prev_volume_velocity,
+        fill_value=0.0,
+    )
 
     prev_open_interest = grouped[open_interest_col].shift(1)
     oi_change = (frame[open_interest_col] - prev_open_interest) / prev_open_interest.where(
         prev_open_interest != 0
     )
     frame["oi_change"] = _clean_numeric(oi_change, fill_value=0.0)
+    prev_oi_change = grouped["oi_change"].shift(1)
+    frame["oi_acceleration"] = _clean_numeric(frame["oi_change"] - prev_oi_change, fill_value=0.0)
+    frame["gap_minutes"] = _clean_numeric(delta_seconds / 60.0, fill_value=0.0)
+    frame["stale_gap_flag"] = (frame["gap_minutes"] > 60.0).astype(int)
 
     frame["tte_seconds"] = _build_tte_seconds(
         frame=frame,
@@ -89,6 +139,9 @@ def build_features(
         tte_col=tte_col,
         end_ts_columns=end_ts_columns,
     )
+    frame["tte_hours"] = _clean_numeric(frame["tte_seconds"] / 3600.0, fill_value=0.0)
+    frame["tte_bucket"] = _build_tte_bucket(frame["tte_hours"])
+    frame["price_distance_mid"] = _clean_numeric((frame[price_col] - 0.5).abs() * 2.0, fill_value=0.0)
 
     frame["liquidity_bucket"] = _build_liquidity_bucket(
         frame=frame,
@@ -107,7 +160,24 @@ def build_features(
             ts_col=ts_col,
         )
 
-    for column in ("returns", "vol", "volume_velocity", "oi_change", "tte_seconds"):
+    for column in (
+        "returns",
+        "returns_3",
+        "returns_6",
+        "vol",
+        "vol_3",
+        "vol_12",
+        "price_acceleration",
+        "reversal_signal",
+        "volume_velocity",
+        "volume_acceleration",
+        "oi_change",
+        "oi_acceleration",
+        "gap_minutes",
+        "tte_seconds",
+        "tte_hours",
+        "price_distance_mid",
+    ):
         frame[column] = _clean_numeric(frame[column], fill_value=0.0)
 
     ordered_columns = [column for column in frame.columns if column not in _FEATURE_COLUMNS]
@@ -116,6 +186,8 @@ def build_features(
 
 
 def _clean_numeric(values: pd.Series, *, fill_value: float) -> pd.Series:
+    if not isinstance(values, pd.Series):
+        values = pd.Series(values)
     numeric = pd.to_numeric(values, errors="coerce")
     return numeric.replace([np.inf, -np.inf], np.nan).fillna(fill_value).astype(float)
 
@@ -170,6 +242,19 @@ def _build_liquidity_bucket_id(liquidity_bucket: pd.Series) -> pd.Series:
     mapping = {"LOW": 0, "MID": 1, "HIGH": 2}
     normalized = liquidity_bucket.astype("string").str.upper()
     return normalized.map(mapping).fillna(1).astype(int)
+
+
+def _build_tte_bucket(tte_hours: pd.Series) -> pd.Series:
+    values = pd.to_numeric(tte_hours, errors="coerce").fillna(0.0)
+    return pd.Series(
+        np.where(
+            values <= 6.0,
+            "0-6h",
+            np.where(values <= 24.0, "6-24h", np.where(values <= 72.0, "24-72h", "72h+")),
+        ),
+        index=tte_hours.index,
+        dtype="object",
+    )
 
 
 def _overlay_high_frequency_features(

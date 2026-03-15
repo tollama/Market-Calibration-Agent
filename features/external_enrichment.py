@@ -20,14 +20,18 @@ _NEWS_DEFAULTS = {
     "news_articles_24h": 0.0,
     "news_articles_72h": 0.0,
     "news_recentness_hours": float("nan"),
+    "news_match_quality": 0.0,
+    "news_weighted_count_72h": 0.0,
 }
 
 _POLL_DEFAULTS = {
     "poll_yes_support": float("nan"),
     "poll_margin": float("nan"),
+    "poll_margin_abs": float("nan"),
     "poll_count_30d": 0.0,
     "poll_days_since_last": float("nan"),
     "poll_match_quality": 0.0,
+    "poll_recency_weight": 0.0,
 }
 
 
@@ -97,8 +101,8 @@ def _compute_news_features(news_frame: pd.DataFrame, query_terms: list[str], as_
         + " "
         + work.get("body", pd.Series("", index=work.index)).astype("string").fillna("")
     ).str.lower()
-    mask = text_source.apply(lambda text: any(term in text for term in query_terms))
-    matched = work.loc[mask & work["_published_at"].notna()].copy()
+    overlap_counts = text_source.apply(lambda text: sum(term in text for term in query_terms))
+    matched = work.loc[(overlap_counts > 0) & work["_published_at"].notna()].copy()
     if matched.empty:
         return dict(_NEWS_DEFAULTS)
 
@@ -107,10 +111,14 @@ def _compute_news_features(news_frame: pd.DataFrame, query_terms: list[str], as_
     recent_72 = matched.loc[(matched["_age_hours"] >= 0) & (matched["_age_hours"] <= 72)]
     if recent_72.empty:
         return dict(_NEWS_DEFAULTS)
+    match_quality = float(overlap_counts.loc[recent_72.index].mean() / max(len(query_terms), 1))
+    weighted_count = float((1.0 / (1.0 + recent_72["_age_hours"])).sum())
     return {
         "news_articles_24h": float(len(recent_24)),
         "news_articles_72h": float(len(recent_72)),
         "news_recentness_hours": float(recent_72["_age_hours"].min()),
+        "news_match_quality": match_quality,
+        "news_weighted_count_72h": weighted_count,
     }
 
 
@@ -155,12 +163,15 @@ def _compute_poll_features(polls_frame: pd.DataFrame, query_terms: list[str], as
     if not yes_support.empty and not no_support.empty:
         margin = float(yes_support.iloc[-1] - no_support.iloc[-1])
     match_quality = overlap_counts.loc[recent.index].clip(lower=0).mean() / max(len(query_terms), 1)
+    recency_weight = float((1.0 / (1.0 + recent["_age_days"])).sum())
     return {
         "poll_yes_support": float(yes_support.iloc[-1]) if not yes_support.empty else float("nan"),
         "poll_margin": margin,
+        "poll_margin_abs": abs(margin) if pd.notna(margin) else float("nan"),
         "poll_count_30d": float(len(recent)),
         "poll_days_since_last": float(recent["_age_days"].min()),
         "poll_match_quality": float(match_quality),
+        "poll_recency_weight": recency_weight,
     }
 
 

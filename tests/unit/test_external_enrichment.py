@@ -46,6 +46,11 @@ def test_enrich_with_external_features_uses_local_csv_inputs(tmp_path: Path) -> 
     )
 
     assert enriched["news_articles_24h"].iloc[0] == 1.0
+    assert enriched["news_match_quality"].iloc[0] > 0.0
+    assert enriched["news_weighted_count_72h"].iloc[0] > 0.0
     assert enriched["poll_count_30d"].iloc[0] == 1.0
     assert enriched["poll_yes_support"].iloc[0] == 52.0
-
+    assert enriched["poll_margin"].iloc[0] == 4.0
+    assert enriched["poll_margin_abs"].iloc[0] == 4.0
+    assert enriched["poll_match_quality"].iloc[0] > 0.0
+    assert enriched["poll_recency_weight"].iloc[0] > 0.0

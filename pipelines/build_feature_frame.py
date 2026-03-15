@@ -41,6 +41,7 @@ def stage_build_features(context: _HasState) -> dict[str, int]:
         liquidity_low=liquidity_low,
         liquidity_high=liquidity_high,
     )
+    feature_frame = _augment_event_consensus_features(feature_frame)
     context.state["feature_frame"] = feature_frame
     return {"feature_count": int(len(feature_frame))}
 
@@ -158,3 +159,35 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         return {key: value for key, value in attributes.items() if not key.startswith("_")}
 
     raise TypeError(f"Unsupported cutoff snapshot row type: {type(row)!r}")
+
+
+def _augment_event_consensus_features(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "event_id" not in frame.columns or "p_yes" not in frame.columns or "ts" not in frame.columns:
+        return frame
+
+    work = frame.copy()
+    work["ts"] = pd.to_datetime(work["ts"], utc=True, errors="coerce")
+    event_group = work.groupby(["event_id", "ts"], dropna=False, sort=False)
+    work["event_market_count"] = event_group["market_id"].transform("count") if "market_id" in work.columns else event_group["p_yes"].transform("count")
+    work["event_consensus_p_yes"] = event_group["p_yes"].transform("mean")
+    work["event_price_dispersion"] = event_group["p_yes"].transform("std").fillna(0.0)
+    work["event_disagreement_abs"] = (pd.to_numeric(work["p_yes"], errors="coerce") - work["event_consensus_p_yes"]).abs().fillna(0.0)
+
+    if "platform" in work.columns:
+        work["cross_platform_count"] = event_group["platform"].transform(lambda s: s.astype("string").nunique())
+        work["cross_platform_disagreement_abs"] = work["event_disagreement_abs"].where(
+            work["cross_platform_count"] > 1,
+            0.0,
+        )
+    else:
+        work["cross_platform_count"] = 1
+        work["cross_platform_disagreement_abs"] = 0.0
+
+    if "market_id" in work.columns:
+        work["event_relative_rank"] = (
+            event_group["p_yes"].rank(method="average", pct=True).fillna(0.5)
+        )
+    else:
+        work["event_relative_rank"] = 0.5
+
+    return work

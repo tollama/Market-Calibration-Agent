@@ -20,6 +20,45 @@ PACK_URL="https://github.com/tollama/Market-Calibration-Agent/blob/main/docs/ops
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
+ensure_label() {
+  local name="$1"
+  local color="$2"
+  local description="$3"
+  local -a cmd=(
+    gh label create "${name}"
+    --repo "${REPO}"
+    --color "${color}"
+    --description "${description}"
+    --force
+  )
+
+  if [[ "${MODE}" == "preview" ]]; then
+    printf '[preview] label %s\n' "${name}"
+    printf '  %q' "${cmd[@]}"
+    printf '\n\n'
+  else
+    printf '[label] %s\n' "${name}"
+    "${cmd[@]}"
+    printf '\n'
+  fi
+}
+
+ensure_labels() {
+  ensure_label "forecasting" "0E8A16" "Forecasting quality and model improvement work"
+  ensure_label "prediction-markets" "1D76DB" "Prediction market specific work"
+  ensure_label "research" "5319E7" "Research and experimentation"
+  ensure_label "evaluation" "BFD4F2" "Benchmarking, backtesting, and evaluation"
+  ensure_label "data" "C2E0C6" "Datasets and data pipelines"
+  ensure_label "features" "F9D0C4" "Feature engineering work"
+  ensure_label "modeling" "FBCA04" "Supervised modeling changes"
+  ensure_label "calibration" "D4C5F9" "Calibration and conformal work"
+  ensure_label "runtime" "0052CC" "Runtime and serving changes"
+  ensure_label "prd2" "C5DEF5" "PRD2 forecast service related work"
+  ensure_label "monitoring" "B60205" "Monitoring and alerting"
+  ensure_label "ops" "E99695" "Operational workflows and runbooks"
+  ensure_label "documentation" "0075CA" "Documentation updates"
+}
+
 create_issue() {
   local slug="$1"
   local title="$2"
@@ -415,6 +454,8 @@ Create a reproducible baseline artifact pack so later improvements can be compar
 
 - ${DOC_URL}
 EOF
+
+ensure_labels
 
 create_issue "epic" "epic(forecasting): improve MCA forecasting quality for prediction markets" "forecasting,prediction-markets,research" "${TMPDIR}/epic.md"
 create_issue "t1" "feat(eval): define forecasting benchmark contract for market vs model quality" "forecasting,evaluation,research" "${TMPDIR}/t1.md"

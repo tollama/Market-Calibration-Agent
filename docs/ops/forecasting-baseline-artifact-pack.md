@@ -41,11 +41,22 @@ To generate a pack from locally available resolved-market data:
 python3 scripts/generate_real_data_forecasting_pack.py
 ```
 
+To point the generator at a specific file:
+
+```bash
+python3 scripts/generate_real_data_forecasting_pack.py \
+  --input /absolute/path/to/resolved_dataset.csv
+```
+
 If local resolved inputs are not present, the script writes a blocked pack with:
 
 - `status.json`
 - `discovery_manifest.json`
 - `README.md`
+
+Input onboarding and accepted schemas are documented in:
+
+- `docs/ops/resolved-input-onboarding.md`
 
 ## Promotion Gate
 

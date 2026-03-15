@@ -79,6 +79,18 @@ def _classify_frame(frame: pd.DataFrame) -> str | None:
     return None
 
 
+def _candidate_from_frame(path: Path, frame: pd.DataFrame) -> CandidateInfo | None:
+    kind = _classify_frame(frame)
+    if kind is None:
+        return None
+    return CandidateInfo(
+        path=str(path),
+        row_count=int(len(frame)),
+        columns=[str(column) for column in frame.columns.tolist()],
+        kind=kind,
+    )
+
+
 def _discover_candidates(root: Path) -> list[CandidateInfo]:
     candidates: list[CandidateInfo] = []
     seen: set[Path] = set()
@@ -94,19 +106,29 @@ def _discover_candidates(root: Path) -> list[CandidateInfo]:
                 frame = _load_table(path)
             except Exception:
                 continue
-            kind = _classify_frame(frame)
-            if kind is None:
+            candidate = _candidate_from_frame(path, frame)
+            if candidate is None:
                 continue
-            candidates.append(
-                CandidateInfo(
-                    path=str(path),
-                    row_count=int(len(frame)),
-                    columns=[str(column) for column in frame.columns.tolist()],
-                    kind=kind,
-                )
-            )
+            candidates.append(candidate)
     candidates.sort(key=lambda item: (0 if item.kind == "raw_snapshot_rows" else 1, -item.row_count, item.path))
     return candidates
+
+
+def _explicit_candidate(path: Path) -> tuple[CandidateInfo | None, pd.DataFrame | None, str | None]:
+    if not path.exists():
+        return None, None, f"Input path does not exist: {path}"
+    try:
+        frame = _load_table(path)
+    except Exception as exc:  # noqa: BLE001
+        return None, None, f"Failed to load input path {path}: {exc}"
+    candidate = _candidate_from_frame(path, frame)
+    if candidate is None:
+        return None, frame, (
+            "Input path loaded successfully but does not match an accepted schema. "
+            "Expected raw snapshot rows with `market_id`, `ts`, resolution timestamp, and `label`/`label_status`, "
+            "or resolved dataset rows with `market_id`, `snapshot_ts`, `resolution_ts`, and `label`."
+        )
+    return candidate, frame, None
 
 
 def _train_from_dataset(dataset: pd.DataFrame) -> tuple[ResolvedLinearModel, pd.DataFrame, dict[str, Any], pd.DataFrame]:
@@ -139,14 +161,22 @@ def _dataset_summary(dataset: pd.DataFrame) -> dict[str, Any]:
     return summary
 
 
-def _write_blocked_pack(output_dir: Path, *, candidates: list[CandidateInfo]) -> dict[str, Any]:
+def _write_blocked_pack(
+    output_dir: Path,
+    *,
+    candidates: list[CandidateInfo],
+    reason: str | None = None,
+    selected_input: CandidateInfo | None = None,
+) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "status": "blocked_no_local_resolved_data",
-        "reason": "No local resolved snapshot rows or resolved dataset tables were found in data/ or artifacts/.",
+        "reason": reason or "No local resolved snapshot rows or resolved dataset tables were found in data/ or artifacts/.",
         "candidate_count": len(candidates),
         "candidates": [asdict(candidate) for candidate in candidates],
     }
+    if selected_input is not None:
+        payload["selected_input"] = asdict(selected_input)
     (output_dir / "status.json").write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     (output_dir / "discovery_manifest.json").write_text(
         json.dumps({"candidates": [asdict(candidate) for candidate in candidates]}, indent=2, sort_keys=True),
@@ -173,24 +203,35 @@ def _write_blocked_pack(output_dir: Path, *, candidates: list[CandidateInfo]) ->
     return payload
 
 
-def generate_real_data_pack(output_dir: Path, *, search_root: Path = ROOT) -> dict[str, Any]:
-    candidates = _discover_candidates(search_root)
-    if not candidates:
-        return _write_blocked_pack(output_dir, candidates=[])
-
-    selected = candidates[0]
-    selected_path = Path(selected.path)
-    frame = _load_table(selected_path)
-    kind = _classify_frame(frame)
-    if kind is None:
-        return _write_blocked_pack(output_dir, candidates=candidates)
+def generate_real_data_pack(
+    output_dir: Path,
+    *,
+    search_root: Path = ROOT,
+    input_path: Path | None = None,
+) -> dict[str, Any]:
+    if input_path is not None:
+        selected, frame, error = _explicit_candidate(input_path)
+        candidates = [selected] if selected is not None else []
+        if error is not None or selected is None or frame is None:
+            return _write_blocked_pack(
+                output_dir,
+                candidates=candidates,
+                reason=error,
+                selected_input=selected,
+            )
+    else:
+        candidates = _discover_candidates(search_root)
+        if not candidates:
+            return _write_blocked_pack(output_dir, candidates=[])
+        selected = candidates[0]
+        frame = _load_table(Path(selected.path))
 
     output_dir.mkdir(parents=True, exist_ok=True)
     model_dir = output_dir / "resolved_model"
     report_dir = output_dir / "backtest_report"
     dataset_dir = output_dir / "dataset"
 
-    if kind == "dataset":
+    if selected.kind == "dataset":
         dataset = frame.copy()
     else:
         from pipelines.build_resolved_training_dataset import ResolvedDatasetConfig, build_resolved_training_dataset
@@ -204,7 +245,12 @@ def generate_real_data_pack(output_dir: Path, *, search_root: Path = ROOT) -> di
         )
 
     if dataset.empty:
-        return _write_blocked_pack(output_dir, candidates=candidates)
+        return _write_blocked_pack(
+            output_dir,
+            candidates=candidates,
+            reason="Selected input produced an empty resolved dataset after filtering and horizon construction.",
+            selected_input=selected,
+        )
 
     model, predictions, summary, ablation = _train_from_dataset(dataset)
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -291,13 +337,19 @@ def generate_real_data_pack(output_dir: Path, *, search_root: Path = ROOT) -> di
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate forecasting artifact pack from local resolved-market data")
+    parser.add_argument("--input", default="", help="explicit resolved input path (csv/parquet/jsonl)")
+    parser.add_argument("--search-root", default="", help="optional root directory for input discovery")
     parser.add_argument(
         "--output-dir",
         default="artifacts/forecasting_baseline_pack/real_data_v1",
         help="artifact output directory",
     )
     args = parser.parse_args()
-    result = generate_real_data_pack(Path(args.output_dir))
+    result = generate_real_data_pack(
+        Path(args.output_dir),
+        search_root=Path(args.search_root) if args.search_root else ROOT,
+        input_path=Path(args.input) if args.input else None,
+    )
     print(json.dumps(result, sort_keys=True))
     return 0 if result.get("status") == "ok" else 2
 

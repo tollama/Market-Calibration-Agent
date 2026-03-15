@@ -110,3 +110,41 @@ groups:
             sample size (< 30 observations). Alert severities for
             these markets are being dampened. Investigate whether
             data ingestion volume has dropped.
+
+      - alert: ForecastBaselineRouteShareHigh
+        expr: >-
+          (
+            sum(rate(tsfm_route_selected_total{route_selected="baseline"}[30m]))
+            /
+            clamp_min(sum(rate(tsfm_route_selected_total[30m])), 0.001)
+          ) > 0.40
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+          domain: forecasting
+        annotations:
+          summary: "Baseline route share elevated"
+          description: >-
+            More than 40% of forecasting requests are being routed to the
+            baseline path for 30 minutes. Review route policy, segment
+            performance, and recent TSFM runtime failures before promotion.
+
+      - alert: ForecastFallbackRateHigh
+        expr: >-
+          (
+            sum(rate(tsfm_fallback_total[30m]))
+            /
+            clamp_min(sum(rate(tsfm_request_total[30m])), 0.001)
+          ) > 0.15
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+          domain: forecasting
+        annotations:
+          summary: "Forecast fallback rate elevated"
+          description: >-
+            More than 15% of forecasting requests have fallen back during the
+            last 30 minutes. Investigate fallback reasons, circuit breaker
+            state, and whether the active route policy should be tightened.

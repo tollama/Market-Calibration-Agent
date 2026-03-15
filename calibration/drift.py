@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import math
-from typing import Mapping
+from collections import defaultdict
+from collections.abc import Sequence
+from typing import Any, Mapping
+
+from calibration.metrics import base_rate_drift as _base_rate_drift
 
 DEFAULT_TARGET_COVERAGE = 0.80
 DEFAULT_MIN_SAMPLES = 200
@@ -173,6 +177,60 @@ def evaluate_retraining_need(
     }
 
 
+def detect_segment_base_rate_drift(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    segment_fields: Sequence[str] = ("category", "liquidity_bucket", "tte_bucket"),
+    time_key: str = "ts",
+    min_segment_rows: int = 20,
+    n_windows: int = 4,
+) -> dict[str, object]:
+    if not rows:
+        return {
+            "evaluated_segment_count": 0,
+            "triggered_segment_count": 0,
+            "triggered_segments": [],
+            "segments": {},
+        }
+    if min_segment_rows <= 0:
+        raise ValueError("min_segment_rows must be positive")
+    if n_windows < 2:
+        raise ValueError("n_windows must be >= 2")
+
+    grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    active_segment_fields = tuple(str(field) for field in segment_fields if field)
+    for idx, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"rows[{idx}] must be a mapping")
+        key_parts = [f"{field}={row.get(field, 'unknown')}" for field in active_segment_fields]
+        grouped["|".join(key_parts)].append(row)
+
+    segment_results: dict[str, dict[str, object]] = {}
+    triggered_segments: list[str] = []
+    for segment_key, segment_rows in sorted(grouped.items()):
+        if len(segment_rows) < min_segment_rows:
+            segment_results[segment_key] = {
+                "drift_detected": False,
+                "sample_size": len(segment_rows),
+                "reason": REASON_INSUFFICIENT_SAMPLES,
+            }
+            continue
+        drift = dict(_base_rate_drift(segment_rows, time_key=time_key, n_windows=n_windows))
+        drift["sample_size"] = len(segment_rows)
+        segment_results[segment_key] = drift
+        if bool(drift.get("drift_detected")):
+            triggered_segments.append(segment_key)
+
+    return {
+        "evaluated_segment_count": sum(
+            1 for result in segment_results.values() if result.get("reason") != REASON_INSUFFICIENT_SAMPLES
+        ),
+        "triggered_segment_count": len(triggered_segments),
+        "triggered_segments": triggered_segments,
+        "segments": segment_results,
+    }
+
+
 __all__ = [
     "DEFAULT_TARGET_COVERAGE",
     "DEFAULT_MIN_SAMPLES",
@@ -181,5 +239,6 @@ __all__ = [
     "REASON_LOW_COVERAGE",
     "REASON_WIDTH_EXPANSION",
     "REASON_INSUFFICIENT_SAMPLES",
+    "detect_segment_base_rate_drift",
     "evaluate_retraining_need",
 ]

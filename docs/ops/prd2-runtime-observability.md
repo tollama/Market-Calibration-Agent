@@ -7,6 +7,7 @@ This doc closes P2-09 by wiring runtime metric emission in the TSFM service path
 From `TSFMRunnerService.forecast()` on every request:
 
 - `tsfm_request_total{rollout_stage,status}`
+- `tsfm_route_selected_total{rollout_stage,route_selected,route_reason}`
 - `tsfm_request_latency_ms_bucket{rollout_stage,le}` (+ `_sum`, `_count`)
 - `tsfm_cycle_time_seconds_bucket{market_id,le}` (+ `_sum`, `_count`)
 - `tsfm_cache_hit_total{rollout_stage}`
@@ -16,6 +17,13 @@ From `TSFMRunnerService.forecast()` on every request:
 - `tsfm_invalid_output_total{rollout_stage}`
 - `tsfm_interval_width{rollout_stage,bucket}`
 - `tsfm_target_coverage{rollout_stage,bucket}`
+
+Route metadata is also emitted in response payloads:
+
+- `meta.route_selected`
+- `meta.route_reason`
+- `meta.route_segment_key`
+- `meta.conformal_segment_key`
 
 ## Scrape endpoint
 

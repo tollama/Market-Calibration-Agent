@@ -50,6 +50,7 @@ def test_service_emits_core_runtime_metrics() -> None:
 
     text = service.render_prometheus_metrics()
     assert 'tsfm_request_total{rollout_stage="canary_5",status="success"} 1.0' in text
+    assert 'tsfm_route_selected_total{rollout_stage="canary_5",route_reason="default",route_selected="tsfm"} 1.0' in text
     assert 'tsfm_request_latency_ms_bucket' in text
     assert 'tsfm_cycle_time_seconds_bucket' in text
     assert 'tsfm_target_coverage{bucket="high",rollout_stage="canary_5"}' in text
@@ -65,3 +66,15 @@ def test_service_emits_crossing_and_cache_metrics() -> None:
     text = service.render_prometheus_metrics()
     assert 'tsfm_quantile_crossing_total{rollout_stage="canary_5"} 1.0' in text
     assert 'tsfm_cache_hit_total{rollout_stage="canary_5"} 1.0' in text
+
+
+def test_service_emits_route_metrics_for_policy_baseline() -> None:
+    service = TSFMRunnerService(adapter=_AdapterOK(), config=TSFMRunnerService.from_runtime_config(adapter=_AdapterOK()).config)
+    service = TSFMRunnerService(
+        adapter=_AdapterOK(),
+        config=service.config.__class__(route_default="baseline"),
+    )
+    service.forecast(_request())
+
+    text = service.render_prometheus_metrics()
+    assert 'tsfm_route_selected_total{rollout_stage="canary_5",route_reason="policy_default_baseline",route_selected="baseline"} 1.0' in text

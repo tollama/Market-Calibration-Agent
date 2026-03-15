@@ -10,6 +10,7 @@ from calibration.drift import (
     REASON_INSUFFICIENT_SAMPLES,
     REASON_LOW_COVERAGE,
     REASON_WIDTH_EXPANSION,
+    detect_segment_base_rate_drift,
     evaluate_retraining_need,
 )
 
@@ -111,3 +112,34 @@ def test_sample_floor_blocks_retraining_even_when_drift_triggers() -> None:
     ]
     diagnostics = result["diagnostics"]
     assert diagnostics["sample_floor_met"] is False
+
+
+def test_detect_segment_base_rate_drift_reports_triggered_segments() -> None:
+    rows = []
+    for idx in range(24):
+        rows.append(
+            {
+                "ts": f"2026-01-{idx + 1:02d}T00:00:00Z",
+                "pred": 0.5,
+                "label": 0 if idx < 12 else 1,
+                "category": "politics",
+                "liquidity_bucket": "high",
+                "tte_bucket": "0_24h",
+            }
+        )
+    for idx in range(24):
+        rows.append(
+            {
+                "ts": f"2026-02-{idx + 1:02d}T00:00:00Z",
+                "pred": 0.5,
+                "label": idx % 2,
+                "category": "sports",
+                "liquidity_bucket": "mid",
+                "tte_bucket": "24_72h",
+            }
+        )
+
+    result = detect_segment_base_rate_drift(rows, min_segment_rows=20, n_windows=4)
+
+    assert result["triggered_segment_count"] == 1
+    assert "category=politics|liquidity_bucket=high|tte_bucket=0_24h" in result["triggered_segments"]

@@ -10,8 +10,17 @@ This project now supports a lightweight rolling conformal calibration job that w
 - Rolling window: last `2000` samples
 - Minimum samples to update: `100`
 
-State file schema (`schema_version=1`) includes:
+State file schema supports both global and segmented state.
+
+`schema_version=1` includes:
 - `adjustment`: `target_coverage`, `quantile_level`, `center_shift`, `width_scale`, `sample_size`
+- `updated_at`
+- `metadata` (source, pre/post coverage, etc.)
+
+`schema_version=2` includes:
+- `default_adjustment`
+- optional `segment_fields`
+- optional `segments` keyed like `liquidity_bucket=high|tte_bucket=0_24h`
 - `updated_at`
 - `metadata` (source, pre/post coverage, etc.)
 
@@ -35,7 +44,9 @@ python -m pipelines.update_conformal_calibration \
   --state-path data/derived/calibration/conformal_state.json \
   --target-coverage 0.8 \
   --window-size 2000 \
-  --min-samples 100
+  --min-samples 100 \
+  --segment-field liquidity_bucket \
+  --segment-field tte_bucket
 ```
 
 Dry-run (compute only, no write):
@@ -56,4 +67,7 @@ Run every hour:
 
 `TSFMRunnerService` auto-loads `data/derived/calibration/conformal_state.json` on startup when present.
 - If state exists and is valid: response includes `conformal_last_step`.
+- If segmented state exists and the request matches a segment key: the service
+  applies the segment-specific conformal adjustment and returns
+  `meta.conformal_segment_key`.
 - If state is missing/invalid: service keeps current behavior (no conformal block, no failure).

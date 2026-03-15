@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from calibration.drift import detect_segment_base_rate_drift as _segment_base_rate_drift_fn
 from calibration.metrics import base_rate_drift as _base_rate_drift_fn
 
 from .build_cutoff_snapshots import build_cutoff_snapshots, stage_build_cutoff_snapshots
@@ -297,6 +298,7 @@ try:
         target_coverage: float = 0.8,
         window_size: int = 2000,
         min_samples: int = 100,
+        segment_fields: tuple[str, ...] = ("liquidity_bucket", "tte_bucket"),
     ) -> dict[str, Any]:
         """Run conformal calibration update from in-memory rows.
 
@@ -333,6 +335,36 @@ try:
         bands = [band for band, _ in samples]
         actuals = [actual for _, actual in samples]
         adjustment = fit_conformal_adjustment(bands, actuals, target_coverage=target_coverage)
+        active_segment_fields = tuple(field for field in segment_fields if any(field in row for row in metric_source_rows))
+        segment_adjustments: dict[str, Any] = {}
+        if active_segment_fields:
+            grouped_samples: dict[str, list[tuple[dict[str, float], float]]] = {}
+            for row in metric_source_rows:
+                q10 = row.get("q10")
+                q50 = row.get("q50")
+                q90 = row.get("q90")
+                actual = row.get("actual") or row.get("resolved_prob")
+                if q10 is None or q50 is None or q90 is None or actual is None:
+                    continue
+                try:
+                    band = {"q10": float(q10), "q50": float(q50), "q90": float(q90)}
+                    actual_f = float(actual)
+                except (TypeError, ValueError):
+                    continue
+                key_parts = [f"{field}={row.get(field, 'unknown')}" for field in active_segment_fields]
+                grouped_samples.setdefault("|".join(key_parts), []).append((band, actual_f))
+            for segment_key, segment_samples in grouped_samples.items():
+                if window_size > 0:
+                    segment_samples = segment_samples[-window_size:]
+                if len(segment_samples) < min_samples:
+                    continue
+                segment_bands = [band for band, _ in segment_samples]
+                segment_actuals = [actual for _, actual in segment_samples]
+                segment_adjustments[segment_key] = fit_conformal_adjustment(
+                    segment_bands,
+                    segment_actuals,
+                    target_coverage=target_coverage,
+                )
 
         pre_report = coverage_report(bands, actuals)
         post_report = coverage_report(
@@ -347,6 +379,7 @@ try:
             "post_coverage": post_report["empirical_coverage"],
             "center_shift": adjustment.center_shift,
             "width_scale": adjustment.width_scale,
+            "segment_adjustment_count": len(segment_adjustments),
         }
 
         if state_path is not None:
@@ -357,7 +390,13 @@ try:
                 "post_coverage": post_report["empirical_coverage"],
                 "target_coverage": target_coverage,
             }
-            save_conformal_adjustment(adjustment, path=Path(state_path), metadata=metadata)
+            save_conformal_adjustment(
+                adjustment,
+                path=Path(state_path),
+                metadata=metadata,
+                segment_adjustments=segment_adjustments or None,
+                segment_fields=list(active_segment_fields),
+            )
             result["state_path"] = state_path
 
         return result
@@ -877,6 +916,7 @@ def _stage_drift(context: PipelineRunContext) -> dict[str, Any]:
 
     try:
         drift_result = _base_rate_drift_fn(metric_source_rows, time_key="ts")
+        drift_result["segment_drift"] = _segment_base_rate_drift_fn(metric_source_rows, time_key="ts")
         context.state["drift_result"] = drift_result
     except Exception as exc:  # pragma: no cover - defensive
         context.state["drift_result"] = {
@@ -896,6 +936,11 @@ def _stage_drift(context: PipelineRunContext) -> dict[str, Any]:
         "drift_detected": bool(drift_result.get("drift_detected")),
         "base_rate_swing": drift_result.get("base_rate_swing"),
         "window_count": drift_result.get("n_windows", 0),
+        "triggered_segment_count": (
+            ((drift_result.get("segment_drift") or {}).get("triggered_segment_count", 0))
+            if isinstance(drift_result, Mapping)
+            else 0
+        ),
     }
 
 

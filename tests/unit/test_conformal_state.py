@@ -7,6 +7,7 @@ import pytest
 from calibration.conformal import ConformalAdjustment
 from calibration.conformal_state import (
     load_conformal_adjustment,
+    load_conformal_adjustments_by_segment,
     load_cptc_state,
     save_conformal_adjustment,
     save_cptc_state,
@@ -51,6 +52,38 @@ def test_load_conformal_adjustment_supports_legacy_flat_payload(tmp_path) -> Non
     loaded = load_conformal_adjustment(path)
     assert loaded is not None
     assert loaded.width_scale == pytest.approx(1.1)
+
+
+def test_save_and_load_segmented_conformal_adjustments_roundtrip(tmp_path) -> None:
+    path = tmp_path / "segmented_conformal_state.json"
+    default_adjustment = ConformalAdjustment(
+        target_coverage=0.8,
+        quantile_level=0.9,
+        center_shift=0.03,
+        width_scale=1.2,
+        sample_size=500,
+    )
+    segment_adjustment = ConformalAdjustment(
+        target_coverage=0.8,
+        quantile_level=0.9,
+        center_shift=0.10,
+        width_scale=1.4,
+        sample_size=120,
+    )
+
+    save_conformal_adjustment(
+        default_adjustment,
+        path=path,
+        metadata={"source": "unit-test"},
+        segment_fields=["liquidity_bucket", "tte_bucket"],
+        segment_adjustments={"liquidity_bucket=high|tte_bucket=0_24h": segment_adjustment},
+    )
+
+    loaded_default = load_conformal_adjustment(path)
+    loaded_segments = load_conformal_adjustments_by_segment(path)
+
+    assert loaded_default == default_adjustment
+    assert loaded_segments["liquidity_bucket=high|tte_bucket=0_24h"] == segment_adjustment
 
 
 def test_save_and_load_cptc_state_roundtrip(tmp_path) -> None:

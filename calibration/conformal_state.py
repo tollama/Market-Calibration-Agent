@@ -40,17 +40,32 @@ def load_conformal_adjustment(path: str | Path | None = None) -> ConformalAdjust
     if not isinstance(payload, Mapping):
         raise ValueError(f"Invalid conformal state payload at {resolved}")
 
-    adjustment_payload = payload.get("adjustment", payload)
+    adjustment_payload = payload.get("default_adjustment", payload.get("adjustment", payload))
     if not isinstance(adjustment_payload, Mapping):
         raise ValueError(f"Invalid conformal adjustment object at {resolved}")
 
-    return ConformalAdjustment(
-        target_coverage=_to_float(adjustment_payload.get("target_coverage"), field="target_coverage"),
-        quantile_level=_to_float(adjustment_payload.get("quantile_level"), field="quantile_level"),
-        center_shift=_to_float(adjustment_payload.get("center_shift"), field="center_shift"),
-        width_scale=_to_float(adjustment_payload.get("width_scale"), field="width_scale"),
-        sample_size=_to_int(adjustment_payload.get("sample_size"), field="sample_size"),
-    )
+    return _decode_adjustment(adjustment_payload)
+
+
+def load_conformal_adjustments_by_segment(path: str | Path | None = None) -> dict[str, ConformalAdjustment]:
+    resolved = _normalize_path(path)
+    if not resolved.exists():
+        return {}
+
+    payload = json.loads(resolved.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"Invalid conformal state payload at {resolved}")
+
+    segments_payload = payload.get("segments")
+    if not isinstance(segments_payload, Mapping):
+        return {}
+
+    decoded: dict[str, ConformalAdjustment] = {}
+    for key, value in segments_payload.items():
+        if not isinstance(key, str) or not isinstance(value, Mapping):
+            continue
+        decoded[key] = _decode_adjustment(value)
+    return decoded
 
 
 def save_conformal_adjustment(
@@ -58,18 +73,34 @@ def save_conformal_adjustment(
     *,
     path: str | Path | None = None,
     metadata: Mapping[str, Any] | None = None,
+    segment_adjustments: Mapping[str, ConformalAdjustment] | None = None,
+    segment_fields: list[str] | None = None,
 ) -> Path:
     resolved = _normalize_path(path)
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2 if segment_adjustments else 1,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "adjustment": asdict(adjustment),
+        "default_adjustment": asdict(adjustment),
         "metadata": dict(metadata or {}),
     }
+    if segment_adjustments:
+        payload["segment_fields"] = list(segment_fields or [])
+        payload["segments"] = {str(key): asdict(value) for key, value in segment_adjustments.items()}
     resolved.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return resolved
+
+
+def _decode_adjustment(payload: Mapping[str, Any]) -> ConformalAdjustment:
+    return ConformalAdjustment(
+        target_coverage=_to_float(payload.get("target_coverage"), field="target_coverage"),
+        quantile_level=_to_float(payload.get("quantile_level"), field="quantile_level"),
+        center_shift=_to_float(payload.get("center_shift"), field="center_shift"),
+        width_scale=_to_float(payload.get("width_scale"), field="width_scale"),
+        sample_size=_to_int(payload.get("sample_size"), field="sample_size"),
+    )
 
 
 DEFAULT_CPTC_STATE_PATH = Path("data/derived/calibration/cptc_state.json")
@@ -126,6 +157,7 @@ __all__ = [
     "DEFAULT_CONFORMAL_STATE_PATH",
     "DEFAULT_CPTC_STATE_PATH",
     "load_conformal_adjustment",
+    "load_conformal_adjustments_by_segment",
     "load_cptc_state",
     "save_conformal_adjustment",
     "save_cptc_state",

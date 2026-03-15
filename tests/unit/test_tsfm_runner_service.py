@@ -358,6 +358,39 @@ def test_tsfm_service_loads_conformal_state_when_present(tmp_path) -> None:
     assert "conformal_last_step" in response
 
 
+def test_tsfm_service_prefers_segmented_conformal_state_when_available(tmp_path) -> None:
+    state_path = tmp_path / "conformal_state.json"
+    save_conformal_adjustment(
+        adjustment=ConformalAdjustment(
+            target_coverage=0.8,
+            quantile_level=0.9,
+            center_shift=0.01,
+            width_scale=1.1,
+            sample_size=200,
+        ),
+        path=state_path,
+        metadata={"source": "test"},
+        segment_fields=["liquidity_bucket", "tte_bucket"],
+        segment_adjustments={
+            "liquidity_bucket=high|tte_bucket=0_24h": ConformalAdjustment(
+                target_coverage=0.8,
+                quantile_level=0.9,
+                center_shift=0.20,
+                width_scale=1.5,
+                sample_size=120,
+            )
+        },
+    )
+
+    config = TSFMServiceConfig(conformal_state_path=str(state_path))
+    service = TSFMRunnerService(adapter=_FakeAdapter(), config=config)
+    response = service.forecast({**_request(), "liquidity_bucket": "high", "tte_bucket": "0_24h"})
+
+    assert response["meta"]["conformal_state_loaded"] is True
+    assert response["meta"]["conformal_segment_key"] == "liquidity_bucket=high|tte_bucket=0_24h"
+    assert response["conformal_last_step"]["q50"] > response["yhat_q"]["0.5"][-1]
+
+
 def test_tsfm_service_conformal_state_missing_keeps_default_behavior(tmp_path) -> None:
     missing_path = tmp_path / "not_there.json"
     config = TSFMServiceConfig(conformal_state_path=str(missing_path))
@@ -400,6 +433,59 @@ def test_tsfm_service_runtime_config_builds_adapter_from_adapter_block(tmp_path)
     assert service.config.cache_ttl_s == 15
     assert service.config.cache_stale_if_error_s == 45
     assert service.config.cache_max_entries == 77
+
+
+def test_tsfm_service_runtime_config_loads_segment_route_policy(tmp_path) -> None:
+    runtime_path = tmp_path / "tsfm_runtime.yaml"
+    runtime_path.write_text(
+        """
+tsfm:
+  routing:
+    default_route: baseline
+    enabled_segments:
+      - liquidity_bucket=high|tte_bucket=0_24h
+    baseline_segments:
+      - category=sports
+""".strip(),
+        encoding="utf-8",
+    )
+
+    service = TSFMRunnerService.from_runtime_config(path=runtime_path, adapter=_FakeAdapter())
+
+    assert service.config.route_default == "baseline"
+    assert service.config.route_enabled_segments == ("liquidity_bucket=high|tte_bucket=0_24h",)
+    assert service.config.route_baseline_segments == ("category=sports",)
+
+
+def test_tsfm_service_route_policy_can_force_baseline_without_adapter_failure() -> None:
+    service = TSFMRunnerService(
+        adapter=_FakeAdapter(),
+        config=TSFMServiceConfig(route_default="baseline"),
+    )
+
+    response = service.forecast(_request())
+
+    assert response["meta"]["route_selected"] == "baseline"
+    assert response["meta"]["route_reason"] == "policy_default_baseline"
+    assert response["meta"]["runtime"] == "baseline"
+    assert response["meta"]["fallback_reason"] == "route_policy_baseline"
+
+
+def test_tsfm_service_route_policy_can_enable_tsfm_for_matching_segment() -> None:
+    service = TSFMRunnerService(
+        adapter=_FakeAdapter(),
+        config=TSFMServiceConfig(
+            route_default="baseline",
+            route_enabled_segments=("liquidity_bucket=high|tte_bucket=0_24h",),
+        ),
+    )
+
+    response = service.forecast({**_request(), "liquidity_bucket": "high", "tte_bucket": "0_24h"})
+
+    assert response["meta"]["route_selected"] == "tsfm"
+    assert response["meta"]["route_reason"] == "policy_segment_enabled"
+    assert response["meta"]["route_segment_key"] == "liquidity_bucket=high|tte_bucket=0_24h"
+    assert response["meta"]["runtime"] == "tollama"
 
 
 def test_tsfm_service_cache_max_entries_is_enforced() -> None:

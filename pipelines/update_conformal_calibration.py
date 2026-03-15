@@ -68,6 +68,7 @@ def run(
     window_size: int,
     min_samples: int,
     dry_run: bool,
+    segment_fields: list[str] | None = None,
 ) -> int:
     samples: list[tuple[dict[str, float], float]] = []
     for row in _iter_rows(input_path):
@@ -89,6 +90,31 @@ def run(
         actuals,
         target_coverage=target_coverage,
     )
+    segment_adjustments: dict[str, Any] = {}
+    active_segment_fields = [field for field in (segment_fields or []) if any(field in row for row in _iter_rows(input_path))]
+
+    if active_segment_fields:
+        grouped_rows: dict[str, list[tuple[dict[str, float], float]]] = {}
+        for row in _iter_rows(input_path):
+            parsed = _normalize_sample(row)
+            if parsed is None:
+                continue
+            key_parts = []
+            for field in active_segment_fields:
+                key_parts.append(f"{field}={row.get(field, 'unknown')}")
+            grouped_rows.setdefault("|".join(key_parts), []).append(parsed)
+        for segment_key, segment_samples in grouped_rows.items():
+            if window_size > 0:
+                segment_samples = segment_samples[-window_size:]
+            if len(segment_samples) < min_samples:
+                continue
+            segment_bands = [band for band, _ in segment_samples]
+            segment_actuals = [actual for _, actual in segment_samples]
+            segment_adjustments[segment_key] = fit_conformal_adjustment(
+                segment_bands,
+                segment_actuals,
+                target_coverage=target_coverage,
+            )
 
     pre_report = coverage_report(bands, actuals)
     post_report = coverage_report(apply_conformal_adjustment_many(bands, adjustment), actuals)
@@ -104,7 +130,13 @@ def run(
     if dry_run:
         print("DRY_RUN")
     else:
-        save_conformal_adjustment(adjustment, path=state_path, metadata=metadata)
+        save_conformal_adjustment(
+            adjustment,
+            path=state_path,
+            metadata=metadata,
+            segment_adjustments=segment_adjustments or None,
+            segment_fields=active_segment_fields,
+        )
 
     print(f"samples={len(samples)}")
     print(f"target_coverage={target_coverage:.3f}")
@@ -112,6 +144,7 @@ def run(
     print(f"width_scale={adjustment.width_scale:.6f}")
     print(f"pre_coverage={pre_report['empirical_coverage']:.4f}")
     print(f"post_coverage={post_report['empirical_coverage']:.4f}")
+    print(f"segment_adjustments={len(segment_adjustments)}")
     if not dry_run:
         print(f"state_path={state_path}")
 
@@ -135,6 +168,7 @@ def main() -> int:
     parser.add_argument("--window-size", type=int, default=2000)
     parser.add_argument("--min-samples", type=int, default=100)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--segment-field", action="append", dest="segment_fields", default=[])
     args = parser.parse_args()
 
     return run(
@@ -144,6 +178,7 @@ def main() -> int:
         window_size=int(args.window_size),
         min_samples=int(args.min_samples),
         dry_run=bool(args.dry_run),
+        segment_fields=list(dict.fromkeys(args.segment_fields)),
     )
 
 

@@ -48,6 +48,10 @@ tsfm:
     max_width: 0.60
   conformal:
     state_path: data/derived/calibration/conformal_state.json
+  routing:
+    default_route: tsfm
+    enabled_segments: []
+    baseline_segments: []
   slo:
     per_request_p95_ms: 300
     cycle_top_n_seconds: 60

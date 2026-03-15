@@ -16,7 +16,7 @@ from typing import Any, Mapping
 import yaml
 
 from calibration.conformal import ConformalAdjustment, apply_conformal_adjustment
-from calibration.conformal_state import load_conformal_adjustment
+from calibration.conformal_state import load_conformal_adjustment, load_conformal_adjustments_by_segment
 from runners.baselines import forecast_baseline_band
 from runners.tollama_adapter import TollamaAdapter, TollamaConfig
 from runners.tsfm_observability import TSFMMetricsEmitter
@@ -145,6 +145,9 @@ class TSFMServiceConfig:
     conformal_state_path: str = "data/derived/calibration/conformal_state.json"
     rollout_stage: str = "unknown"
     target_coverage: float = 0.9
+    route_default: str = "tsfm"
+    route_enabled_segments: tuple[str, ...] = ()
+    route_baseline_segments: tuple[str, ...] = ()
 
 
 class TSFMRunnerService:
@@ -160,13 +163,16 @@ class TSFMRunnerService:
         self.config = config or TSFMServiceConfig()
         if conformal_adjustment is not None:
             self.conformal_adjustment = conformal_adjustment
+            self.conformal_adjustments_by_segment: dict[str, ConformalAdjustment] = {}
             self._conformal_loaded_from_state = False
         else:
             try:
                 self.conformal_adjustment = load_conformal_adjustment(self.config.conformal_state_path)
+                self.conformal_adjustments_by_segment = load_conformal_adjustments_by_segment(self.config.conformal_state_path)
                 self._conformal_loaded_from_state = self.conformal_adjustment is not None
             except Exception:  # noqa: BLE001
                 self.conformal_adjustment = None
+                self.conformal_adjustments_by_segment = {}
                 self._conformal_loaded_from_state = False
         self.metrics_emitter = metrics_emitter or TSFMMetricsEmitter()
         self._state_lock = RLock()
@@ -210,6 +216,7 @@ class TSFMRunnerService:
         interval = tsfm.get("interval_sanity") or {}
         degradation = tsfm.get("degradation") or {}
         conformal = tsfm.get("conformal") or {}
+        routing = tsfm.get("routing") or {}
 
         config = TSFMServiceConfig(
             default_freq=str(tsfm.get("freq", "5m")),
@@ -243,6 +250,9 @@ class TSFMRunnerService:
             conformal_state_path=str(conformal.get("state_path", "data/derived/calibration/conformal_state.json")),
             rollout_stage=str(tsfm.get("rollout_stage", "unknown")),
             target_coverage=float(conformal.get("target_coverage", 0.9)),
+            route_default=str(routing.get("default_route", "tsfm")),
+            route_enabled_segments=tuple(str(item) for item in (routing.get("enabled_segments") or [])),
+            route_baseline_segments=tuple(str(item) for item in (routing.get("baseline_segments") or [])),
         )
         if adapter is None:
             adapter_raw = tsfm.get("adapter") or {}
@@ -333,6 +343,8 @@ class TSFMRunnerService:
             "transform": request.get("transform"),
             "model": request.get("model"),
             "liquidity_bucket": request.get("liquidity_bucket"),
+            "category": request.get("category"),
+            "tte_bucket": request.get("tte_bucket"),
         }
         encoded = json.dumps(stable, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -526,6 +538,54 @@ class TSFMRunnerService:
     def render_prometheus_metrics(self) -> str:
         return self.metrics_emitter.render_prometheus()
 
+    def _select_conformal_adjustment(
+        self,
+        request: Mapping[str, Any],
+    ) -> tuple[ConformalAdjustment | None, str | None]:
+        for key in self._segment_candidates(request):
+            if key in self.conformal_adjustments_by_segment:
+                return self.conformal_adjustments_by_segment[key], key
+        return self.conformal_adjustment, None
+
+    def _segment_candidates(self, request: Mapping[str, Any]) -> tuple[str, ...]:
+        category = str(request.get("category") or "unknown")
+        liquidity_bucket = str(request.get("liquidity_bucket") or "unknown")
+        tte_bucket = str(request.get("tte_bucket") or "unknown")
+        candidates = (
+            f"category={category}|liquidity_bucket={liquidity_bucket}|tte_bucket={tte_bucket}",
+            f"category={category}|liquidity_bucket={liquidity_bucket}",
+            f"liquidity_bucket={liquidity_bucket}|tte_bucket={tte_bucket}",
+            f"category={category}|tte_bucket={tte_bucket}",
+            f"category={category}",
+            f"liquidity_bucket={liquidity_bucket}",
+            f"tte_bucket={tte_bucket}",
+        )
+        return tuple(dict.fromkeys(candidates))
+
+    def _select_route(
+        self,
+        request: Mapping[str, Any],
+    ) -> tuple[str, str, str | None]:
+        candidates = self._segment_candidates(request)
+        baseline_segments = set(self.config.route_baseline_segments)
+        enabled_segments = set(self.config.route_enabled_segments)
+
+        for key in candidates:
+            if key in baseline_segments:
+                return "baseline", "policy_segment_baseline", key
+
+        if enabled_segments:
+            for key in candidates:
+                if key in enabled_segments:
+                    return "tsfm", "policy_segment_enabled", key
+            if str(self.config.route_default).lower() == "baseline":
+                return "baseline", "policy_default_baseline", None
+            return "tsfm", "policy_default_tsfm", None
+
+        if str(self.config.route_default).lower() == "baseline":
+            return "baseline", "policy_default_baseline", None
+        return "tsfm", "default", None
+
     def forecast(self, request: Mapping[str, Any]) -> dict[str, Any]:
         started = time.perf_counter()
         request = self._normalize_forecast_request(request)
@@ -571,17 +631,27 @@ class TSFMRunnerService:
 
         warnings: list[str] = []
         fallback_reason: str | None = None
+        route_selected, route_reason, route_segment_key = self._select_route(request)
 
         if len(y_raw) < self.config.min_points_for_tsfm:
             fallback_reason = "too_few_points"
+            route_selected = "baseline"
+            route_reason = "too_few_points"
 
         liquidity_bucket = str(request.get("liquidity_bucket") or "").lower()
         if liquidity_bucket == self.config.baseline_only_liquidity:
             fallback_reason = "baseline_only_liquidity_bucket"
+            route_selected = "baseline"
+            route_reason = "baseline_only_liquidity_bucket"
 
         inferred_max_gap = self._extract_max_gap_minutes(request, freq_seconds=step_seconds)
         if inferred_max_gap is not None and inferred_max_gap > self.config.max_gap_minutes:
             fallback_reason = "max_gap_exceeded"
+            route_selected = "baseline"
+            route_reason = "max_gap_exceeded"
+
+        if route_selected == "baseline" and fallback_reason is None:
+            fallback_reason = "route_policy_baseline"
 
         if set(quantiles) != set(self.config.default_quantiles):
             warnings.append("unsupported_quantiles_requested;using_default")
@@ -593,9 +663,13 @@ class TSFMRunnerService:
             probe_every = max(int(self.config.degradation_probe_every_n_requests), 1)
             if self._degradation_probe_counter % probe_every != 0:
                 fallback_reason = "degradation_baseline_only"
+                route_selected = "baseline"
+                route_reason = "degradation_baseline_only"
 
         if fallback_reason is None and not self._can_attempt_tollama(now=now):
             fallback_reason = "circuit_breaker_open"
+            route_selected = "baseline"
+            route_reason = "circuit_breaker_open"
 
         y_input = y_raw[-self.config.input_len_steps :]
         use_logit = space.lower() == "logit"
@@ -615,6 +689,9 @@ class TSFMRunnerService:
             "circuit_breaker_state": self._breaker_state,
             "degradation_state": self._degradation_state,
             "conformal_state_loaded": self._conformal_loaded_from_state,
+            "route_selected": route_selected,
+            "route_reason": route_reason,
+            "route_segment_key": route_segment_key,
         }
 
         if fallback_reason is None:
@@ -659,8 +736,17 @@ class TSFMRunnerService:
                     ]
                     stale_meta["circuit_breaker_state"] = self._breaker_state
                     stale_meta["degradation_state"] = self._degradation_state
+                    stale_meta["route_selected"] = route_selected
+                    stale_meta["route_reason"] = route_reason
+                    stale_meta["route_segment_key"] = route_segment_key
                     stale_value["meta"] = stale_meta
                     self.metrics_emitter.inc("tsfm_cache_hit_total", rollout_stage=rollout_stage)
+                    self.metrics_emitter.inc(
+                        "tsfm_route_selected_total",
+                        rollout_stage=rollout_stage,
+                        route_selected=str(route_selected),
+                        route_reason=str(route_reason),
+                    )
                     self.metrics_emitter.inc("tsfm_fallback_total", rollout_stage=rollout_stage, reason="stale_if_error")
                     self.metrics_emitter.inc("tsfm_request_total", rollout_stage=rollout_stage, status="success")
                     self.metrics_emitter.observe_request_latency_ms((time.perf_counter() - started) * 1000.0, rollout_stage=rollout_stage)
@@ -764,17 +850,27 @@ class TSFMRunnerService:
             "meta": meta,
         }
 
-        if self.conformal_adjustment is not None:
+        selected_adjustment, selected_segment = self._select_conformal_adjustment(request)
+        if selected_adjustment is not None:
             last_band = {
                 "q10": response["yhat_q"]["0.1"][-1],
                 "q50": response["yhat_q"]["0.5"][-1],
                 "q90": response["yhat_q"]["0.9"][-1],
             }
-            adjusted = apply_conformal_adjustment(last_band, self.conformal_adjustment)
+            adjusted = apply_conformal_adjustment(last_band, selected_adjustment)
             response["conformal_last_step"] = adjusted
+            response["meta"]["conformal_segment_key"] = selected_segment
+        else:
+            response["meta"]["conformal_segment_key"] = None
 
         if meta.get("fallback_used"):
             self.metrics_emitter.inc("tsfm_fallback_total", rollout_stage=rollout_stage, reason=str(meta.get("fallback_reason") or "unknown"))
+        self.metrics_emitter.inc(
+            "tsfm_route_selected_total",
+            rollout_stage=rollout_stage,
+            route_selected=str(meta.get("route_selected") or "unknown"),
+            route_reason=str(meta.get("route_reason") or "unknown"),
+        )
         if str(self._breaker_state) == str(CircuitState.OPEN):
             self.metrics_emitter.inc("tsfm_breaker_open_total", rollout_stage=rollout_stage)
 

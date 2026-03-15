@@ -29,6 +29,7 @@
 ## Stage 5 — Conformal 연동
 - 기존 `calibration.conformal` 모듈 재사용
 - 서비스에서 옵션으로 `conformal_last_step` 반환 지원
+- 세그먼트별 conformal state(`default_adjustment` + `segments`) 자동 로드 지원
 
 ## Stage 6 — Baseline/Fallback 정책
 - fallback 트리거:
@@ -36,6 +37,11 @@
   - 입력 길이 부족
   - 저유동성 bucket(기본: `low`)
 - fallback 사용 시 `meta.fallback_used=true` 및 reason warning 기록
+- route policy 지원:
+  - `routing.default_route`
+  - `routing.enabled_segments`
+  - `routing.baseline_segments`
+  - 응답 메타에 `route_selected`, `route_reason`, `route_segment_key`
 
 ## Stage 7 — 라이선스 가드레일
 - `configs/tsfm_models.yaml` 신설
@@ -50,6 +56,8 @@
   - crossing/clipping 안정성
   - cache hit 메타 플래그
   - circuit breaker open fallback
+  - segment route policy
+  - segmented conformal state selection
 - `tests/unit/test_api_tsfm_forecast.py`
   - API contract test
 - `tests/unit/test_tsfm_model_license_guard.py`
@@ -83,6 +91,7 @@
 - `cache_ttl_s=60`: 5분 cadence에서 동일 요청 burst 흡수
 - `circuit_breaker_failures=5, cooldown=120s`: flapping 줄이고 안정적 복구 유도
 - `http pool: max_connections=200, keepalive=50`: top-N 배치 처리량 headroom 확보
+- `routing.default_route=tsfm`: evidence가 없으면 기존 TSFM path 유지, segment별 baseline 강등은 정책으로만 수행
 
 ## 실행 방법
 1. 의존성 설치

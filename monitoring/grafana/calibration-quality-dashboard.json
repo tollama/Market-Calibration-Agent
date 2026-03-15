@@ -318,6 +318,75 @@
           }
         ]
       }
+    },
+    {
+      "title": "Route Share",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (route_selected) (rate(tsfm_route_selected_total[$__rate_interval]))",
+          "legendFormat": "{{route_selected}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 12
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "title": "Fallback Reasons",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(tsfm_fallback_total[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "title": "Route Decision Mix",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (route_reason) (increase(tsfm_route_selected_total[$__range]))",
+          "legendFormat": "{{route_reason}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right" },
+        "tooltip": { "mode": "single" }
+      }
     }
   ],
   "refresh": "30s",
@@ -330,5 +399,5 @@
   "timezone": "browser",
   "title": "Calibration Quality",
   "uid": "calibration-quality",
-  "version": 1
+  "version": 2
 }

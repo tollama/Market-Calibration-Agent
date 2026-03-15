@@ -14,6 +14,8 @@ system flags a significant base-rate shift in prediction markets.
 | `CalibrationECEHigh`         | `calibration_ece > 0.10` for 30m          | warning  |
 | `ConformalCoverageLow`       | `calibration_conformal_coverage < 0.75` for 1h | warning |
 | `ConformalCoverageCritical`  | `calibration_conformal_coverage < 0.65` for 30m | critical |
+| `ForecastBaselineRouteShareHigh` | baseline route share > 40% for 30m | warning |
+| `ForecastFallbackRateHigh`   | fallback rate > 15% for 30m | warning |
 
 ## Triage Steps
 
@@ -34,6 +36,8 @@ Open the Grafana **Calibration Quality** dashboard:
 - **Calibration Score Trends** panel: Is Brier increasing monotonically?
 - **Conformal Coverage** panel: Has coverage dropped below the target line (0.80)?
 - **Drift Status** panel: Shows `DRIFT` or `Stable`
+- **Route Share** panel: Is the baseline route taking over due to policy or runtime degradation?
+- **Fallback Reasons** panel: Are fallbacks concentrated in one reason bucket?
 
 Check the drift analysis windows:
 
@@ -78,7 +82,9 @@ python -m pipelines.update_conformal_calibration \
   --state-path data/derived/calibration/conformal_state.json \
   --target-coverage 0.80 \
   --window-size 2000 \
-  --min-samples 100
+  --min-samples 100 \
+  --segment-field liquidity_bucket \
+  --segment-field tte_bucket
 ```
 
 #### 4c. Manual Prediction Recalibration
@@ -108,10 +114,12 @@ adjusted = recalibrate_predictions(
 | Drift persists > 24h after recalibration | Escalate to ML team lead |
 | Brier > 0.35 for > 1h | Consider model retraining |
 | Multiple concurrent alerts | Incident review; check data pipeline health |
+| Baseline route share > 40% for > 30m | Freeze promotion and review route policy |
 
 ### 6. Resolution
 
 - Verify Brier and ECE return to normal range on Grafana dashboard
 - Verify conformal coverage recovers to >= 0.80
 - Verify `calibration_drift_detected` returns to 0
+- Verify route share and fallback rate return to normal range
 - Update the incident log if drift was caused by a known external event

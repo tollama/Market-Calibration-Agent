@@ -111,3 +111,26 @@ class TestConformalPipelineUpdate:
         result = _run_conformal_update(rows, min_samples=10)
         assert result["status"] == "skipped"
         assert result["sample_count"] == 0
+
+    def test_run_conformal_update_reports_segment_adjustment_count(self) -> None:
+        from pipelines.daily_job import _run_conformal_update
+
+        rows = [
+            {
+                **_make_conformal_row(
+                    market_id=f"mkt-{i}",
+                    actual=0.45 + 0.001 * i,
+                ),
+                "liquidity_bucket": "high" if i < 120 else "mid",
+                "tte_bucket": "0_24h" if i < 120 else "24_72h",
+            }
+            for i in range(240)
+        ]
+        result = _run_conformal_update(
+            rows,
+            min_samples=100,
+            segment_fields=("liquidity_bucket", "tte_bucket"),
+        )
+
+        assert result["status"] == "updated"
+        assert result["segment_adjustment_count"] == 2

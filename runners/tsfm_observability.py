@@ -99,6 +99,7 @@ class TSFMMetricsEmitter:
         lines: list[str] = []
         with self._lock:
             lines.append("# TYPE tsfm_request_total counter")
+            lines.append("# TYPE tsfm_route_selected_total counter")
             lines.append("# TYPE tsfm_fallback_total counter")
             lines.append("# TYPE tsfm_breaker_open_total counter")
             lines.append("# TYPE tsfm_invalid_output_total counter")

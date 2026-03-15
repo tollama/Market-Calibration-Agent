@@ -84,6 +84,7 @@ class TestDriftStage:
         assert "drift_detected" in drift_result
         assert "base_rate_swing" in drift_result
         assert "n_windows" in drift_result
+        assert "segment_drift" in drift_result
 
     def test_drift_stage_detects_drifting_data(self) -> None:
         from pipelines.daily_job import _stage_drift
@@ -104,6 +105,7 @@ class TestDriftStage:
         # Base rate swings from 0.0 to 1.0 → well above 0.15 threshold
         assert drift_result["drift_detected"] is True
         assert drift_result["base_rate_swing"] > 0.15
+        assert "triggered_segment_count" in output
 
     def test_drift_stage_stores_result_in_context(self) -> None:
         from pipelines.daily_job import _stage_drift

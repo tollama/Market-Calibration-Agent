@@ -56,6 +56,9 @@ def test_generate_real_data_pack_uses_local_dataset_candidate(tmp_path, monkeypa
     assert (tmp_path / "real_data_pack" / "promotion_decision.json").exists()
     manifest = json.loads((tmp_path / "real_data_pack" / "status.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "ok"
+    readme = (tmp_path / "real_data_pack" / "README.md").read_text(encoding="utf-8")
+    assert "Promotion summary:" in readme
+    assert "overall decision:" in readme
 
 
 def test_generate_real_data_pack_accepts_explicit_input_path(tmp_path, monkeypatch) -> None:

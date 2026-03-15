@@ -1,6 +1,42 @@
 {
-  "fetched_markets": 500,
+  "category_counts": {
+    "crypto": 10,
+    "education": 6,
+    "entertainment": 6,
+    "games": 47,
+    "macro": 14,
+    "personal": 28,
+    "politics": 31,
+    "science": 16,
+    "social": 2,
+    "sports": 16,
+    "technology": 8,
+    "test": 13,
+    "travel": 1,
+    "unknown": 83,
+    "weather": 5
+  },
+  "fetched_markets": 2000,
   "output_path": "data/derived/resolved/bootstrap_manifold_resolved_dataset.csv",
-  "resolved_rows": 47,
-  "status": "ok"
+  "resolved_rows": 286,
+  "status": "ok",
+  "template_group_counts": {
+    "crypto": 9,
+    "education": 6,
+    "entertainment": 6,
+    "games": 47,
+    "macro": 11,
+    "numeric_threshold": 11,
+    "personal": 28,
+    "politics": 31,
+    "science": 16,
+    "social": 2,
+    "sports": 16,
+    "technology": 8,
+    "test": 13,
+    "travel": 1,
+    "unknown": 77,
+    "weather": 4
+  },
+  "unique_events": 229
 }

@@ -161,6 +161,67 @@ def _dataset_summary(dataset: pd.DataFrame) -> dict[str, Any]:
     return summary
 
 
+def _render_success_readme(
+    *,
+    selected: CandidateInfo,
+    dataset_summary: dict[str, Any],
+    training_summary: dict[str, Any],
+    promotion: dict[str, Any],
+    report_summary: dict[str, Any],
+) -> str:
+    categories = ", ".join(dataset_summary.get("categories", [])) or "none"
+    liquidity_buckets = ", ".join(dataset_summary.get("liquidity_buckets", [])) or "none"
+    tte_buckets = ", ".join(dataset_summary.get("tte_buckets", [])) or "none"
+    recommended = ", ".join(promotion.get("recommended_variants", [])) or "none"
+    blocked = ", ".join(promotion.get("blocked_variants", [])) or "none"
+    conditional = ", ".join(promotion.get("conditional_variants", [])) or "none"
+    return (
+        "\n".join(
+            [
+                "# Real-Data Forecasting Pack",
+                "",
+                f"Selected input: `{selected.path}`",
+                f"Input kind: `{selected.kind}`",
+                "",
+                "Dataset summary:",
+                f"- rows: `{dataset_summary.get('rows', 0)}`",
+                f"- markets: `{dataset_summary.get('markets', 0)}`",
+                f"- categories: `{categories}`",
+                f"- liquidity buckets: `{liquidity_buckets}`",
+                f"- tte buckets: `{tte_buckets}`",
+                "",
+                "Training summary:",
+                f"- feature count: `{training_summary.get('feature_count', 0)}`",
+                f"- target mode: `{training_summary.get('target_mode', 'unknown')}`",
+                f"- baseline brier: `{training_summary.get('brier_baseline', 'n/a')}`",
+                f"- blended brier: `{training_summary.get('brier_blended', 'n/a')}`",
+                "",
+                "Promotion summary:",
+                f"- overall decision: `{promotion.get('overall_decision', 'unknown')}`",
+                f"- gate passed: `{promotion.get('gate_passed', False)}`",
+                f"- recommended variants: `{recommended}`",
+                f"- conditional variants: `{conditional}`",
+                f"- blocked variants: `{blocked}`",
+                "",
+                "Backtest summary:",
+                f"- event holdout rows: `{report_summary.get('event_holdout_rows', 0)}`",
+                f"- walk-forward folds: `{report_summary.get('walk_forward_fold_count', 0)}`",
+                f"- prediction variants: `{', '.join(report_summary.get('prediction_variants', [])) or 'none'}`",
+                "",
+                "Outputs:",
+                "- `status.json`",
+                "- `discovery_manifest.json`",
+                "- `dataset_summary.json`",
+                "- `promotion_decision.json`",
+                "- `dataset/dataset.csv`",
+                "- `resolved_model/`",
+                "- `backtest_report/`",
+            ]
+        )
+        + "\n"
+    )
+
+
 def _write_blocked_pack(
     output_dir: Path,
     *,
@@ -291,12 +352,13 @@ def generate_real_data_pack(
     )
     promotion = evaluate_promotion_gate(report_dir / "decision_summary.csv")
 
+    dataset_summary = _dataset_summary(dataset)
     manifest = {
         "status": "ok",
         "selected_input": asdict(selected),
         "candidate_count": len(candidates),
         "candidates": [asdict(candidate) for candidate in candidates],
-        "dataset_summary": _dataset_summary(dataset),
+        "dataset_summary": dataset_summary,
         "training_summary": summary,
         "report_summary": report_summary,
         "promotion": promotion,
@@ -308,28 +370,17 @@ def generate_real_data_pack(
     )
     (output_dir / "promotion_decision.json").write_text(json.dumps(promotion, indent=2, sort_keys=True), encoding="utf-8")
     (output_dir / "dataset_summary.json").write_text(
-        json.dumps(_dataset_summary(dataset), indent=2, sort_keys=True),
+        json.dumps(dataset_summary, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     (output_dir / "README.md").write_text(
-        "\n".join(
-            [
-                "# Real-Data Forecasting Pack",
-                "",
-                f"Selected input: `{selected.path}`",
-                f"Input kind: `{selected.kind}`",
-                "",
-                "Outputs:",
-                "- `status.json`",
-                "- `discovery_manifest.json`",
-                "- `dataset_summary.json`",
-                "- `promotion_decision.json`",
-                "- `dataset/dataset.csv`",
-                "- `resolved_model/`",
-                "- `backtest_report/`",
-            ]
-        )
-        + "\n",
+        _render_success_readme(
+            selected=selected,
+            dataset_summary=dataset_summary,
+            training_summary=summary,
+            promotion=promotion,
+            report_summary=report_summary,
+        ),
         encoding="utf-8",
     )
     return manifest

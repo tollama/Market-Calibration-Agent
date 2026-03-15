@@ -4,6 +4,10 @@ This repo now includes a deterministic reference artifact pack at:
 
 - `artifacts/forecasting_baseline_pack/reference_fixture_v1`
 
+It also includes a real-data discovery path at:
+
+- `artifacts/forecasting_baseline_pack/real_data_v1`
+
 The pack is generated from repo-local fixture data and is intended to make the
 forecasting evaluation contract reproducible in-repo. It is not a substitute
 for a production benchmark run on live resolved-market data.
@@ -31,6 +35,18 @@ python3 scripts/generate_forecasting_baseline_pack.py \
   --output-dir artifacts/forecasting_baseline_pack/my_run
 ```
 
+To generate a pack from locally available resolved-market data:
+
+```bash
+python3 scripts/generate_real_data_forecasting_pack.py
+```
+
+If local resolved inputs are not present, the script writes a blocked pack with:
+
+- `status.json`
+- `discovery_manifest.json`
+- `README.md`
+
 ## Promotion Gate
 
 The committed pack includes `backtest_report/decision_summary.csv`. To evaluate
@@ -53,3 +69,6 @@ Exit codes:
   reporting, and promotion-gate automation.
 - Replace or supplement it with a real resolved-market benchmark pack when
   offline research data is available locally.
+- Use `scripts/generate_real_data_forecasting_pack.py` as the default path for
+  that replacement. The current workspace run is recorded at
+  `artifacts/forecasting_baseline_pack/real_data_v1/status.json`.

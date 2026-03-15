@@ -4,6 +4,7 @@
 - Forecasting improvement issue pack: `docs/ops/forecasting-improvement-issue-templates.md`
 - Forecasting improvement GitHub issue bodies: `docs/ops/forecasting-improvement-github-issues.md`
 - Forecasting baseline artifact pack: `docs/ops/forecasting-baseline-artifact-pack.md`
+- Real-data baseline discovery artifact: `artifacts/forecasting_baseline_pack/real_data_v1/README.md`
 - PRD1+PRD2 traceability matrix: `docs/ops/prd12-traceability-matrix.md`
 - TSFM forecast operations policy: `docs/ops/tsfm-forecast-operational-policy.md`
 - TSFM canary rollout runbook: `docs/ops/tsfm-canary-rollout-runbook.md`

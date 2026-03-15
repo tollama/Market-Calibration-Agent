@@ -123,13 +123,27 @@ def test_generate_backtest_report_writes_expected_artifacts(tmp_path: Path) -> N
     assert summary["walk_forward_enabled"] is True
     assert (tmp_path / "overall_summary.csv").exists()
     assert (tmp_path / "group_metrics.csv").exists()
+    assert (tmp_path / "edge_bucket_metrics.csv").exists()
     assert (tmp_path / "predictions.csv").exists()
     assert (tmp_path / "walk_forward_overall_summary.csv").exists()
     assert (tmp_path / "walk_forward_fold_summary.csv").exists()
+    assert (tmp_path / "walk_forward_worst_fold_summary.csv").exists()
+    assert (tmp_path / "walk_forward_edge_bucket_metrics.csv").exists()
     assert (tmp_path / "walk_forward_predictions.csv").exists()
+    assert (tmp_path / "event_holdout_overall_summary.csv").exists()
+    assert (tmp_path / "event_holdout_group_metrics.csv").exists()
+    assert (tmp_path / "event_holdout_edge_bucket_metrics.csv").exists()
+    assert (tmp_path / "event_holdout_predictions.csv").exists()
+    assert (tmp_path / "decision_summary.csv").exists()
     assert (tmp_path / "summary.md").exists()
 
     overall = pd.read_csv(tmp_path / "overall_summary.csv")
     assert set(overall["model_variant"]) == {"baseline", "market", "primary"}
-    assert set(overall.columns) >= {"brier", "log_loss", "ece", "accuracy", "avg_pnl"}
+    assert set(overall.columns) >= {"brier", "log_loss", "ece", "accuracy", "avg_pnl", "selection_rate"}
 
+    worst_fold = pd.read_csv(tmp_path / "walk_forward_worst_fold_summary.csv")
+    assert set(worst_fold.columns) >= {"model_variant", "worst_fold", "worst_fold_brier"}
+
+    decision = pd.read_csv(tmp_path / "decision_summary.csv")
+    assert set(decision.columns) >= {"model_variant", "benchmark_variant", "decision"}
+    assert "market" in set(decision["benchmark_variant"])

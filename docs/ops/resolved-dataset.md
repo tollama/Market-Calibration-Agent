@@ -5,14 +5,23 @@
 Each output row contains:
 
 - one resolved binary label per market
-- one selected `snapshot_ts` per requested horizon
+- one or more deterministic `snapshot_ts` rows per requested horizon
 - `resolution_ts`
 - `horizon_hours`
 - `market_prob` copied from `p_yes` when absent
+- `sample_index`
+- `snapshot_gap_minutes`
+- `age_since_open_minutes`
+- `tte_minutes`
+- `tte_bucket`
+- `platform`
 
 Selection rule:
 
-- for each market and horizon, choose the latest snapshot with `ts <= resolution_ts - horizon`
+- for each market and horizon, choose rows with `ts <= resolution_ts - horizon`
+- default `sample_mode=all_eligible` emits all eligible as-of rows in deterministic order
+- `sample_mode=latest_only` preserves the old latest-snapshot behavior
+- optional spacing and per-horizon caps can reduce row count without introducing randomness
 
 Optional enrichment:
 

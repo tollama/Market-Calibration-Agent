@@ -17,6 +17,7 @@ def _build_fixture(path: Path) -> None:
         event_id = events[idx % len(events)]
         base = 0.35 + 0.002 * idx
         actual = min(0.95, max(0.05, base))
+        market_prob = min(1.0, max(0.0, actual - 0.015 if idx % 2 == 0 else actual + 0.015))
         rows.append(
             {
                 "market_id": f"m-{idx % 3}",
@@ -24,6 +25,11 @@ def _build_fixture(path: Path) -> None:
                 "category": categories[event_id],
                 "ts": t.isoformat(),
                 "actual": actual,
+                "market_prob": market_prob,
+                "liquidity_bucket": ["LOW", "MID", "HIGH"][idx % 3],
+                "tte_bucket": ["0-6h", "6-24h", "24h+"][idx % 3],
+                "horizon_hours": [1, 6, 24][idx % 3],
+                "platform": "polymarket",
                 "baseline_q05": max(0.0, actual - 0.18),
                 "baseline_q10": max(0.0, actual - 0.12),
                 "baseline_q50": actual,
@@ -64,13 +70,29 @@ def test_event_holdout_pipeline_generates_artifacts(tmp_path: Path) -> None:
     assert set(summary["splits"]) == {"event_holdout", "time_validation"}
 
     metrics_df = pd.read_csv(output_dir / "offline_eval_metrics.csv")
+    segments_df = pd.read_csv(output_dir / "offline_eval_segments.csv")
     assert set(metrics_df["split"]) == {"event_holdout", "time_validation"}
-    assert set(metrics_df["model"]) == {"baseline", "tsfm_raw", "tsfm_conformal"}
-    assert all(col in metrics_df.columns for col in ["coverage_80", "coverage_90", "pinball_mean"])
+    assert set(metrics_df["model"]) == {"market", "baseline", "tsfm_raw", "tsfm_conformal"}
+    assert all(
+        col in metrics_df.columns
+        for col in [
+            "coverage_80",
+            "coverage_90",
+            "pinball_mean",
+            "mse_q50",
+            "mae_q50",
+            "avg_pnl",
+            "selection_rate",
+        ]
+    )
+    assert set(segments_df["group_by"]) == {"category", "liquidity_bucket", "tte_bucket", "horizon_hours", "platform"}
 
     summary_json = json.loads((output_dir / "offline_eval_summary.json").read_text(encoding="utf-8"))
     assert summary_json["rows"] == 40
     assert summary_json["model_prefixes"] == ["baseline", "tsfm_raw", "tsfm_conformal"]
+    assert summary_json["schema_version"] == "2.0"
+    assert summary_json["market_baseline_column"] == "market_prob"
+    assert summary_json["output_segments_csv"].endswith("offline_eval_segments.csv")
 
 
 def test_event_holdout_pipeline_outputs_are_reproducible(tmp_path: Path) -> None:
@@ -95,11 +117,15 @@ def test_event_holdout_pipeline_outputs_are_reproducible(tmp_path: Path) -> None
 
     metrics_a = (output_a / "offline_eval_metrics.csv").read_text(encoding="utf-8")
     metrics_b = (output_b / "offline_eval_metrics.csv").read_text(encoding="utf-8")
+    segments_a = (output_a / "offline_eval_segments.csv").read_text(encoding="utf-8")
+    segments_b = (output_b / "offline_eval_segments.csv").read_text(encoding="utf-8")
     summary_a = json.loads((output_a / "offline_eval_summary.json").read_text(encoding="utf-8"))
     summary_b = json.loads((output_b / "offline_eval_summary.json").read_text(encoding="utf-8"))
 
     assert metrics_a == metrics_b
+    assert segments_a == segments_b
     for key in (
+        "schema_version",
         "rows",
         "time_validation_rows",
         "event_holdout_rows",

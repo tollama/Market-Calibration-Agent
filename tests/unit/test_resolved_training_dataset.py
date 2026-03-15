@@ -66,7 +66,7 @@ def _resolved_rows() -> pd.DataFrame:
 def test_build_resolved_training_dataset_selects_latest_snapshot_before_horizon() -> None:
     dataset = build_resolved_training_dataset(
         _resolved_rows(),
-        config=ResolvedDatasetConfig(horizons_hours=(1, 3)),
+        config=ResolvedDatasetConfig(horizons_hours=(1, 3), sample_mode="latest_only"),
     )
 
     assert len(dataset) == 4
@@ -82,6 +82,47 @@ def test_build_resolved_training_dataset_selects_latest_snapshot_before_horizon(
     assert m1_h1["label"] == 1
     assert m2_h1["label"] == 0
     assert m1_h1["market_prob"] == m1_h1["p_yes"]
+    assert m1_h1["tte_bucket"] == "0-6h"
+    assert m2_h3["platform"] == "unknown"
+
+
+def test_build_resolved_training_dataset_can_emit_multiple_samples_per_horizon() -> None:
+    dataset = build_resolved_training_dataset(
+        _resolved_rows(),
+        config=ResolvedDatasetConfig(horizons_hours=(1,), sample_mode="all_eligible"),
+    )
+
+    m1_rows = dataset.loc[dataset["market_id"] == "m1"].reset_index(drop=True)
+    m2_rows = dataset.loc[dataset["market_id"] == "m2"].reset_index(drop=True)
+
+    assert len(m1_rows) == 2
+    assert m1_rows["snapshot_ts"].tolist() == [
+        "2026-01-01T00:00:00+00:00",
+        "2026-01-01T03:00:00+00:00",
+    ]
+    assert m1_rows["sample_index"].tolist() == [1, 2]
+    assert len(m2_rows) == 2
+    assert m2_rows["snapshot_ts"].tolist() == [
+        "2026-01-01T00:00:00+00:00",
+        "2026-01-01T07:00:00+00:00",
+    ]
+    assert (dataset["tte_minutes"] >= dataset["horizon_hours"] * 60).all()
+    assert (dataset["age_since_open_minutes"] >= 0).all()
+
+
+def test_build_resolved_training_dataset_respects_spacing_and_max_samples() -> None:
+    dataset = build_resolved_training_dataset(
+        _resolved_rows(),
+        config=ResolvedDatasetConfig(
+            horizons_hours=(1,),
+            sample_mode="all_eligible",
+            min_snapshot_spacing_minutes=200,
+            max_samples_per_horizon=1,
+        ),
+    )
+
+    assert len(dataset) == 2
+    assert dataset.loc[dataset["market_id"] == "m1", "snapshot_ts"].iloc[0] == "2026-01-01T03:00:00+00:00"
 
 
 def test_build_resolved_training_dataset_enriches_template_features_when_enabled() -> None:

@@ -58,6 +58,12 @@ Input onboarding and accepted schemas are documented in:
 
 - `docs/ops/resolved-input-onboarding.md`
 
+The repo also includes a bootstrap helper for Manifold:
+
+```bash
+python3 scripts/bootstrap_manifold_resolved_dataset.py
+```
+
 ## Promotion Gate
 
 The committed pack includes `backtest_report/decision_summary.csv`. To evaluate

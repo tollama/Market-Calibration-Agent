@@ -1,0 +1,6 @@
+{
+  "fetched_markets": 500,
+  "output_path": "data/derived/resolved/bootstrap_manifold_resolved_dataset.csv",
+  "resolved_rows": 47,
+  "status": "ok"
+}

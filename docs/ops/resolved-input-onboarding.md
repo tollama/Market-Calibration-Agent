@@ -56,6 +56,25 @@ python3 scripts/generate_real_data_forecasting_pack.py \
   --output-dir artifacts/forecasting_baseline_pack/real_data_v1
 ```
 
+## Bootstrap From Manifold
+
+If you do not already have a resolved dataset file, you can bootstrap a minimal
+one from Manifold's public API:
+
+```bash
+python3 scripts/bootstrap_manifold_resolved_dataset.py \
+  --output data/derived/resolved/bootstrap_manifold_resolved_dataset.csv \
+  --limit 500
+```
+
+Then build the real-data pack from that file:
+
+```bash
+python3 scripts/generate_real_data_forecasting_pack.py \
+  --input data/derived/resolved/bootstrap_manifold_resolved_dataset.csv \
+  --output-dir artifacts/forecasting_baseline_pack/real_data_v1
+```
+
 For repo-relative discovery in a different directory:
 
 ```bash
@@ -78,7 +97,10 @@ The blocking reason is written to:
 
 ## Current Workspace State
 
-The current repo run is blocked because no local resolved input file is present.
-See:
+The current repo now includes a bootstrap-generated resolved dataset and a
+successful real-data pack run. See:
 
+- `data/derived/resolved/bootstrap_manifold_resolved_dataset.csv`
+- `data/derived/resolved/bootstrap_manifold_resolved_dataset.summary.json`
+- `artifacts/forecasting_baseline_pack/real_data_v1/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_v1/status.json`

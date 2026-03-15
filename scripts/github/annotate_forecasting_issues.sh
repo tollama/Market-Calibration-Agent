@@ -18,6 +18,7 @@ TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
 DOC_URL="https://github.com/tollama/Market-Calibration-Agent/blob/main/docs/ops/forecasting-improvement-github-issues.md"
+BRIEF_URL="https://github.com/tollama/Market-Calibration-Agent/blob/main/docs/ops/forecasting-improvement-execution-brief.md"
 
 EPIC=1
 T1=2
@@ -180,6 +181,7 @@ Produce forecasts that outperform raw market probabilities and the current MCA b
 ## References
 
 - Canonical issue bodies: ${DOC_URL}
+- Execution brief: ${BRIEF_URL}
 EOF
 
 ensure_milestone_labels

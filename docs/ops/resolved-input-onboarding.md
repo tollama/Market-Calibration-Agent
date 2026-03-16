@@ -56,7 +56,26 @@ python3 scripts/generate_real_data_forecasting_pack.py \
   --output-dir artifacts/forecasting_baseline_pack/real_data_v1
 ```
 
-## Bootstrap From Manifold
+## Bootstrap From Supported Prediction Markets
+
+If you want the broadest local bootstrap from the implemented connectors,
+generate one combined dataset from Polymarket, Kalshi, and Manifold:
+
+```bash
+python3 scripts/bootstrap_prediction_market_resolved_dataset.py \
+  --output data/derived/resolved/bootstrap_prediction_market_resolved_dataset.csv \
+  --limit-per-platform 1000
+```
+
+Then build the real-data pack from that file:
+
+```bash
+python3 scripts/generate_real_data_forecasting_pack.py \
+  --input data/derived/resolved/bootstrap_prediction_market_resolved_dataset.csv \
+  --output-dir artifacts/forecasting_baseline_pack/real_data_v1
+```
+
+## Bootstrap From Manifold Only
 
 If you do not already have a resolved dataset file, you can bootstrap a minimal
 one from Manifold's public API:
@@ -102,5 +121,9 @@ successful real-data pack run. See:
 
 - `data/derived/resolved/bootstrap_manifold_resolved_dataset.csv`
 - `data/derived/resolved/bootstrap_manifold_resolved_dataset.summary.json`
+- `data/derived/resolved/bootstrap_prediction_market_resolved_dataset.csv`
+- `data/derived/resolved/bootstrap_prediction_market_resolved_dataset.summary.json`
+- `artifacts/forecasting_baseline_pack/direct_eval_all_platforms_v1/decision_summary.csv`
+- `artifacts/forecasting_baseline_pack/direct_eval_all_platforms_v1/summary.md`
 - `artifacts/forecasting_baseline_pack/real_data_v1/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_v1/status.json`

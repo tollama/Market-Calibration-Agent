@@ -30,7 +30,7 @@ def create_connector(
         from .kalshi import KalshiConnector
 
         return KalshiConnector(
-            base_url=cfg.get("base_url", "https://trading-api.kalshi.com/trade-api/v2"),
+            base_url=cfg.get("base_url", "https://api.elections.kalshi.com/trade-api/v2"),
             api_key_id=cfg.get("api_key_id"),
             api_key_secret=cfg.get("api_key_secret"),
             max_retries=cfg.get("max_retries", 3),

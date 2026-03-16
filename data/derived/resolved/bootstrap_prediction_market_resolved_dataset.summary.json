@@ -1,0 +1,51 @@
+{
+  "category_counts": {
+    "art": 28,
+    "business": 6,
+    "chess": 13,
+    "coronavirus": 30,
+    "crypto": 58,
+    "entertainment": 4,
+    "games": 14,
+    "global_politics": 3,
+    "macro": 4,
+    "nba_playoffs": 1,
+    "nfts": 3,
+    "olympics": 2,
+    "personal": 2,
+    "politics": 2,
+    "pop_culture": 17,
+    "science": 3,
+    "space": 2,
+    "sports": 524,
+    "tech": 2,
+    "test": 3,
+    "unknown": 20,
+    "us_current_affairs": 79,
+    "weather": 2
+  },
+  "markets": 822,
+  "output_path": "data/derived/resolved/bootstrap_prediction_market_resolved_dataset.csv",
+  "platform_fetch_counts": {
+    "kalshi": {
+      "event_count": 500,
+      "market_count": 500
+    },
+    "manifold": {
+      "event_count": 0,
+      "market_count": 500
+    },
+    "polymarket": {
+      "event_count": 0,
+      "market_count": 500
+    }
+  },
+  "platform_row_counts": {
+    "kalshi": 500,
+    "manifold": 46,
+    "polymarket": 276
+  },
+  "resolved_rows": 822,
+  "status": "ok",
+  "unique_events": 720
+}

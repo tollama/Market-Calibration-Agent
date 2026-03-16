@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-DEFAULT_BASE_URL = "https://trading-api.kalshi.com/trade-api/v2"
+DEFAULT_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
 
 class KalshiConnectorError(Exception):

@@ -68,6 +68,13 @@ The repo also includes a bootstrap helper for Manifold:
 python3 scripts/bootstrap_manifold_resolved_dataset.py
 ```
 
+For a broader local bootstrap that uses all implemented market-data connectors,
+use:
+
+```bash
+python3 scripts/bootstrap_prediction_market_resolved_dataset.py
+```
+
 ## Promotion Gate
 
 The committed pack includes `backtest_report/decision_summary.csv`. To evaluate

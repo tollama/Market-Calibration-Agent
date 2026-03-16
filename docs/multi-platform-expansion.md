@@ -207,7 +207,7 @@ Lazy imports prevent circular dependency issues and keep unused platform code fr
 
 | Aspect | Detail |
 |---|---|
-| **Base URL** | `https://trading-api.kalshi.com/trade-api/v2` |
+| **Base URL** | `https://api.elections.kalshi.com/trade-api/v2` |
 | **Auth** | Bearer token via `api_key_id` (set via `KALSHI_API_KEY_ID` env var) |
 | **Pagination** | Cursor-based: response includes `cursor` field for next page |
 | **Markets endpoint** | `GET /markets` → response: `{"markets": [...], "cursor": "..."}` |
@@ -316,7 +316,7 @@ platforms:
   kalshi:
     enabled: false          # opt-in
     connector: kalshi
-    base_url: "https://trading-api.kalshi.com/trade-api/v2"
+    base_url: "https://api.elections.kalshi.com/trade-api/v2"
     api_key_id_env: "KALSHI_API_KEY_ID"
     api_key_secret_env: "KALSHI_API_KEY_SECRET"
     max_retries: 3

@@ -211,6 +211,7 @@ Lazy imports prevent circular dependency issues and keep unused platform code fr
 | **Auth** | Bearer token via `api_key_id` (set via `KALSHI_API_KEY_ID` env var) |
 | **Pagination** | Cursor-based: response includes `cursor` field for next page |
 | **Markets endpoint** | `GET /markets` → response: `{"markets": [...], "cursor": "..."}` |
+| **Historical markets** | `GET /historical/markets` → same response shape; fetches archived/settled markets for training data augmentation. Supports `mve_filter=exclude` to skip multi-way venue events. |
 | **Events endpoint** | `GET /events` → response: `{"events": [...], "cursor": "..."}` |
 | **Record ID** | Primary key: `ticker` field (e.g., `AAPL-24MAR14-150`) |
 | **Normalization** | Recursive camelCase → snake_case, platform-prefixed IDs (`kalshi:{ticker}`) |
@@ -423,3 +424,45 @@ The XAI trust score explainer (`calibration/xai_integration.py`) reads platform 
 6. Write tests in `tests/unit/test_{platform}_connector.py` using `httpx.MockTransport`.
 
 No changes to pipelines, schemas, API, or storage layer are needed — the abstraction handles everything.
+
+---
+
+## 9) Cross-Platform Market Normalization
+
+`features/prediction_market_normalization.py` provides deterministic normalization that standardizes data across platforms:
+
+### Canonical category inference
+
+Platform-specific categories are mapped to a fixed canonical set: `politics`, `crypto`, `macro`, `sports`, `science_health`, `technology`, `culture`, `business`, `weather`, `lifestyle`, `other`. Mapping uses:
+1. Exact match table (e.g., `pop_culture` → `culture`, `us_current_affairs` → `politics`).
+2. Token matching on title/slug/platform (e.g., title containing "inflation" → `macro`).
+3. Fallback to `other`.
+
+### Market structure classification
+
+Detects non-standard contract types, particularly on Kalshi:
+- `combo_multi_leg`: Multi-clause combos (parlay, crosscategory, SGP tickers, multiple yes/no clauses).
+- `player_prop`: Sports player prop patterns.
+- `standard_binary`: Default.
+
+Non-standard structures are excluded from training by default to focus on well-behaved binary contracts.
+
+### Integration
+
+`augment_prediction_market_context(frame)` adds `canonical_category`, `market_structure`, `platform_category`, and `is_standard_market` in one call. Used by:
+- `scripts/bootstrap_prediction_market_resolved_dataset.py` (data bootstrap)
+- `scripts/generate_real_data_forecasting_pack.py` (training data generation)
+- `pipelines/train_resolved_model.py` (segment routing features)
+
+---
+
+## 10) Kalshi Historical Markets
+
+`KalshiConnector.fetch_historical_markets()` fetches archived/settled markets from Kalshi's `/historical/markets` endpoint with cursor pagination (same pattern as live markets).
+
+Purpose: Increases training data volume by incorporating historical resolved markets, improving model calibration with more historical patterns.
+
+Integration in the bootstrap script:
+- Fetches historical markets with `mve_filter=exclude` (excludes multi-way venue events).
+- Combines with live market records and deduplicates by ticker.
+- Tracks `historical_market_count` in platform summaries.

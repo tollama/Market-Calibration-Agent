@@ -46,7 +46,7 @@ flowchart LR
   - `connectors/polymarket_subgraph.py`: GraphQL client with retry/backoff and normalized metric rows.
   - `connectors/polymarket_ws.py`: async websocket stream with reconnect/backoff and subscription helpers.
 - Data connectors (Kalshi):
-  - `connectors/kalshi.py`: async HTTP client with cursor pagination, bearer-token auth, retry/backoff.
+  - `connectors/kalshi.py`: async HTTP client with cursor pagination, bearer-token auth, retry/backoff. Includes `fetch_historical_markets()` for archived/settled markets from `/historical/markets`.
   - `connectors/kalshi_normalizer.py`: field mapping (ticker-based IDs, bid/ask midpoint probabilities).
 - Data connectors (Manifold Markets):
   - `connectors/manifold.py`: async HTTP client with before-cursor pagination, no auth, deduplication.
@@ -54,11 +54,16 @@ flowchart LR
 - Pipeline orchestration:
   - `pipelines/daily_job.py`: staged orchestrator (`discover -> ingest -> normalize -> snapshots -> cutoff -> features -> metrics -> publish`) with checkpoint/resume and retry controls.
   - `pipelines/realtime_ws_job.py`: captures ticks, builds 1m/5m bars, writes run metrics.
+- Market normalization:
+  - `features/prediction_market_normalization.py`: cross-platform canonical category inference, market structure classification, platform-category tagging, non-standard contract filtering.
 - Modeling and scoring:
   - `features/build_features.py`: deterministic feature engineering (returns, vol, velocity, OI change, TTE, liquidity bucket).
   - `calibration/*`: calibration metrics, interval metrics, conformal fit/apply, drift trigger logic.
   - `calibration/trust_score.py`: weighted trust-score computation (0-100).
   - `agents/alert_agent.py` + `pipelines/build_alert_feed.py`: rule-based severity and alert feed generation.
+- Resolved model training:
+  - `pipelines/train_resolved_model.py`: offline trainer with segment routing (`crypto_vs_rest`, `kalshi_vs_rest`, custom), segment gating (validation-based activation), and segment-balanced sample weighting.
+  - `pipelines/generate_backtest_report.py`: walk-forward backtesting with prob-column fallback.
 - Forecast service:
   - `runners/tsfm_service.py`: TSFM service runtime (adapter call, fallback, cache, circuit breaker, degradation state machine, post-processing, optional conformal last-step adjustment).
   - `runners/tollama_adapter.py`: HTTP adapter for tollama-compatible runtime endpoint.

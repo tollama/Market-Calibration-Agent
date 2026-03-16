@@ -114,7 +114,17 @@ All platform connectors implement the `MarketDataConnector` Protocol (`connector
   - slug history rows on slug change
   - conflict accumulation in deterministic order.
 
-## 6) Feature, Calibration, and Trust Computation
+## 6) Market Normalization and Feature Computation
+
+### Cross-platform normalization (`features/prediction_market_normalization.py`)
+
+- `normalize_category_token(value)`: Standardizes category strings to lowercase with underscores.
+- `infer_canonical_category(category, title, slug, platform)`: Maps platform-specific categories to canonical set via exact match table + keyword inference from title/slug/platform. Canonical set: `politics`, `crypto`, `macro`, `sports`, `science_health`, `technology`, `culture`, `business`, `weather`, `lifestyle`, `other`.
+- `classify_market_structure(platform, title, slug, market_id)`: Detects market structure:
+  - `combo_multi_leg`: Kalshi multi-clause combos (parlay, crosscategory, SGP tickers; multiple yes/no clauses or commas).
+  - `player_prop`: Sports player prop patterns (e.g., "Player Name: 20+").
+  - `standard_binary`: Default for normal binary markets.
+- `augment_prediction_market_context(frame)`: Applies all normalization in one call, adding `canonical_category`, `market_structure`, `platform_category` (`{platform}:{canonical_category}`), and `is_standard_market` columns.
 
 ### Feature engineering (`features/build_features.py`)
 
@@ -175,7 +185,43 @@ All platform connectors implement the `MarketDataConnector` Protocol (`connector
 - Only top-N selected markets request TSFM forecasts.
 - Produces explicit per-market decisions (`EMIT` vs `SUPPRESS` with reason codes).
 
-## 8) TSFM Runner Service Internals
+## 8) Resolved Model Training (`pipelines/train_resolved_model.py`)
+
+### Segment routing
+
+- `SegmentRoutingConfig` dataclass configures routing strategy, route key column, minimum segment rows, and gate parameters.
+- Predefined strategies:
+  - `crypto_vs_rest`: Segments crypto from all other categories.
+  - `kalshi_vs_rest`: Segments by platform (Kalshi vs others).
+  - Custom: Routes on any categorical column specified by `route_key`.
+- `_segment_route_series()` returns a Series with segment labels for each row.
+
+### Segmented resolved model
+
+- `SegmentedResolvedModel` maintains a global `ResolvedLinearModel` (baseline) plus segment-specific models.
+- `predict_frame()` generates predictions using the global model first, then routes each row to the appropriate segment model; keeps global as fallback.
+- Full serialization via `to_payload()` / `from_payload()` preserving routing config and all segment models.
+
+### Segment gating
+
+- `_evaluate_segment_route_gate()` validates segments using walk-forward windows:
+  - Measures weighted Brier score improvement per segment.
+  - Activates only if: enough validation windows (`gate_min_windows`), average improvement exceeds `gate_min_improvement`, worst-case within `gate_worst_case_tolerance`.
+- Gate metrics (activate, valid_windows, avg_improvement, worst_improvement) persisted in model payload.
+
+### Segment-balanced sample weighting
+
+- `_sample_weight_series()` computes per-row weights when `sample_weight_scheme="segment_balanced"`:
+  - Segments by `sample_weight_key` column (default: `platform_category`).
+  - Weight = `(median_count / segment_count) ^ sample_weight_power`, clipped to `[sample_weight_min, sample_weight_cap]`, normalized by mean.
+- Applied in ridge solver, validation folds, and blend selection via `_weighted_brier_score()` / `_weighted_log_loss()`.
+
+### Training features
+
+- Numeric candidates include market prob, price action, volume, OI, TTE, template, news, poll, event context, and cross-platform features.
+- Categorical candidates include `canonical_category`, `platform_category`, `market_structure`, `liquidity_bucket`, `tte_bucket`, `template_group`, `platform`.
+
+## 9) TSFM Runner Service Internals
 
 ### Request lifecycle (`runners/tsfm_service.py`)
 
@@ -216,7 +262,7 @@ All platform connectors implement the `MarketDataConnector` Protocol (`connector
 - Handles retryable HTTP/network errors with backoff+jitter.
 - Extracts quantile payload from known response shapes and returns normalized `dict[float, list[float]]`.
 
-## 9) API and Derived Store Behavior
+## 10) API and Derived Store Behavior
 
 ### API endpoints (`api/app.py`)
 
@@ -248,14 +294,14 @@ All platform connectors implement the `MarketDataConnector` Protocol (`connector
 - Alert cache includes source-signature invalidation and deduping strategy.
 - Postmortem loader prefers dated files and falls back to plain `<market_id>.md`.
 
-## 10) LLM-Specific Agent Implementation
+## 11) LLM-Specific Agent Implementation
 
 - `llm/client.py` enforces deterministic sampling policy defaults (seed/temperature/top_p).
 - Strict JSON parsing/validation in `llm/schemas.py` rejects missing/extra keys and invalid field types.
 - `agents/question_quality_agent.py` retries up to 3 times on strict JSON violations.
 - `agents/explain_agent.py` applies evidence-bound validation (`agents/explain_validator.py`) and line-level output policy.
 
-## 11) Operational Scripts and Gates
+## 12) Operational Scripts and Gates
 
 - Release and hardening scripts:
   - `scripts/prd2_verify_all.sh`

@@ -1,6 +1,6 @@
 # PRD1 구현 상태 (I-01~I-20)
 
-기준 시점: 2026-02-20 (현재 워크트리 코드 기준)  
+기준 시점: 2026-03-16 (현재 워크트리 코드 기준)
 판정 기준:
 - `Implemented`: PRD AC 핵심 요건 충족
 - `Partial`: 구현은 있으나 AC 일부 미충족 또는 운영 연결 미완료
@@ -49,6 +49,15 @@
 
 - 실데이터 통합 회귀 부재: Gamma/Subgraph/WS 포함 ingest→publish E2E(네트워크 포함) 검증 없음
 - `I-15`/`I-20` 핵심 회귀는 반영됨: `tests/unit/test_i15_acceptance.py`, `tests/unit/test_alert_feed_gate_rules.py`, `tests/unit/test_api_postmortem_latest.py`, `tests/unit/test_postmortem_loader_pattern.py`로 strict gate 조합과 postmortem 최신본/패턴 fallback이 검증됨
+
+## 2026-03 추가 구현 항목
+
+- **Market normalization** (`features/prediction_market_normalization.py`): 플랫폼 간 canonical category 추론, market structure 분류(`standard_binary`/`combo_multi_leg`/`player_prop`), `platform_category` 태깅 구현. `augment_prediction_market_context()` 단일 호출로 전체 정규화 수행.
+- **Kalshi historical markets** (`connectors/kalshi.py`): `fetch_historical_markets()` 추가. `/historical/markets` 엔드포인트에서 archived/settled 시장 데이터를 cursor pagination으로 수집. bootstrap 스크립트에서 live + historical 결합 및 ticker 기반 중복 제거.
+- **Segment routing** (`pipelines/train_resolved_model.py`): `SegmentedResolvedModel` + `SegmentRoutingConfig`로 global + segment별 모델 학습/예측 라우팅 구현. 기본 전략: `crypto_vs_rest`, `kalshi_vs_rest`, 또는 custom field 기반.
+- **Segment gating**: `_evaluate_segment_route_gate()`로 walk-forward 검증 기반 segment 활성화 판정. `gate_min_windows`, `gate_min_improvement`, `gate_worst_case_tolerance` 파라미터.
+- **Segment-balanced sample weighting**: `sample_weight_scheme="segment_balanced"`로 대규모 platform/category 블록의 지배를 완화. power/min/cap 파라미터로 가중치 조절.
+- **Prob-column fallback** (`pipelines/generate_backtest_report.py`): backtest 리포트에서 `p_{variant}` 컬럼 우선 탐색 후 fallback.
 
 ## 남은 Actionable Backlog (<=5)
 

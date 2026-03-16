@@ -181,3 +181,15 @@ PYTHONPATH=. python3 pipelines/bench_tsfm_runner_perf.py --requests 200 --unique
   - `scripts/prd2_verify_all.sh`: **PASS** (unit/integration/perf/audit 전 단계 통과)
   - 산출물: `artifacts/prd2_verify_summary.json`
 - 회귀 수정 필요 사항: 없음 (green 상태 유지)
+
+## 2026-03 추가 구현 항목
+
+### Resolved model training 고도화
+- **Segment routing** (`pipelines/train_resolved_model.py`): `SegmentedResolvedModel` + `SegmentRoutingConfig`로 global + segment별 resolved model 학습/예측 라우팅 구현. `crypto_vs_rest`, `kalshi_vs_rest`, custom field 기반 전략 지원.
+- **Segment gating**: `_evaluate_segment_route_gate()`로 walk-forward 검증 기반 segment 활성화 판정. gate 미달 segment는 global model fallback.
+- **Segment-balanced sample weighting**: `sample_weight_scheme="segment_balanced"`로 platform/category 불균형 완화.
+
+### 데이터 파이프라인 보강
+- **Market normalization** (`features/prediction_market_normalization.py`): canonical category, market structure, platform_category 정규화. non-standard 계약 구조 필터링.
+- **Kalshi historical markets** (`connectors/kalshi.py`): `fetch_historical_markets()` 추가로 archived 시장 학습 데이터 증강.
+- **Prob-column fallback**: backtest 리포트에서 `p_{variant}` 컬럼 탐색 후 fallback 지원.

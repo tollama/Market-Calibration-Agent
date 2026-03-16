@@ -6,10 +6,12 @@ It combines data ingestion, calibration metrics, trust scoring, alerting, and fo
 
 ## What This App Can Do
 
-- Ingest prediction-market data from multiple platforms (Polymarket, Kalshi, Manifold Markets) via a unified connector abstraction layer.
+- Ingest prediction-market data from multiple platforms (Polymarket, Kalshi, Manifold Markets) via a unified connector abstraction layer, including Kalshi historical/archived markets.
+- Normalize cross-platform market data: canonical category inference, market structure classification (`standard_binary`, `combo_multi_leg`, `player_prop`), and non-standard contract filtering.
 - Build deterministic feature frames and cutoff snapshots for calibration workflows.
 - Compute calibration metrics (Brier, log-loss, ECE, segments) and trust scores.
 - Generate alert feeds with configurable thresholds and gating policies.
+- Train resolved-market forecasting models with segment routing (`crypto_vs_rest`, `kalshi_vs_rest`, custom field-based), segment gating (validation-based activation), and segment-balanced sample weighting.
 - Serve a read-only API for scoreboards, alerts, market summaries, and postmortems.
 - Serve TSFM forecast inference with runtime hardening:
   - auth/rate-limit guard
@@ -113,6 +115,28 @@ Weights are configurable via `configs/default.yaml` under `trust_score.weights`.
 Both systems appear side-by-side in the scoreboard (each market row contains `trust_score`, `brier`, `log_loss`, `ece`) but they are computed independently — the Trust Score does **not** aggregate calibration metrics.
 
 See `calibration/trust_score.py` for the Trust Score formula and `calibration/metrics.py` for calibration metric implementations.
+
+## Market Normalization
+
+Cross-platform market data is normalized via `features/prediction_market_normalization.py`:
+
+- **Canonical category**: Maps platform-specific categories (e.g., `pop_culture`, `us_current_affairs`) to a fixed set (`politics`, `crypto`, `macro`, `sports`, `science_health`, `technology`, `culture`, `business`, `weather`, `lifestyle`, `other`) using exact matches and keyword inference from title/slug.
+- **Market structure**: Classifies markets as `standard_binary`, `combo_multi_leg` (Kalshi multi-clause combos), or `player_prop` (sports player props).
+- **Platform category**: Combined `{platform}:{canonical_category}` key for segment-aware training.
+- **Augmentation**: `augment_prediction_market_context(frame)` adds `canonical_category`, `market_structure`, `platform_category`, and `is_standard_market` columns in one call.
+
+Non-standard market structures are excluded from training by default to focus on standard binary contracts.
+
+## Resolved Model Training
+
+Offline resolved-market model training (`pipelines/train_resolved_model.py`) supports:
+
+- **Segment routing**: Routes predictions through global or segment-specific models via `SegmentRoutingConfig`. Predefined strategies: `crypto_vs_rest`, `kalshi_vs_rest`; or custom field-based routing on any categorical column.
+- **Segment gating**: Validation-based activation prevents segment models from activating unless they reliably improve predictions (`gate_min_windows`, `gate_min_improvement`, `gate_worst_case_tolerance`).
+- **Segment-balanced weighting**: `sample_weight_scheme="segment_balanced"` reduces domination by large platform/category blocks using `(median_count / segment_count) ^ power` weights clipped to `[min, cap]`.
+- **Serialization**: `SegmentedResolvedModel` persists global + segment models, routing config, and gate metrics via `to_payload()` / `from_payload()`.
+
+See operational docs: [Resolved Model Training](docs/ops/resolved-model-training.md), [Forecasting Baseline Artifact Pack](docs/ops/forecasting-baseline-artifact-pack.md).
 
 ## Config Files
 

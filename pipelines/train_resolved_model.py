@@ -13,6 +13,7 @@ import pandas as pd
 
 from calibration.metrics import brier_score, log_loss, summarize_metrics_extended
 from features.external_enrichment import ExternalEnrichmentConfig, enrich_with_external_features
+from features.trust_snapshot_ingest import TrustSnapshotConfig, enrich_with_trust_snapshots
 from pipelines.build_resolved_training_dataset import (
     ResolvedDatasetConfig,
     build_resolved_training_dataset,
@@ -62,6 +63,16 @@ _NUMERIC_CANDIDATES = (
     "cross_platform_count",
     "cross_platform_disagreement_abs",
     "event_relative_rank",
+    "ext_news_trust_score",
+    "ext_news_credibility",
+    "ext_news_corroboration",
+    "ext_news_freshness",
+    "ext_news_count",
+    "ext_fin_trust_score",
+    "ext_fin_liquidity",
+    "ext_fin_volatility",
+    "ext_fin_regime_score",
+    "ext_fin_execution_risk",
 )
 _CATEGORICAL_CANDIDATES = (
     "category",
@@ -85,6 +96,8 @@ _FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     "external_polls": ("poll_yes_support", "poll_margin", "poll_margin_abs", "poll_count_30d", "poll_days_since_last", "poll_match_quality", "poll_recency_weight", "poll_mode"),
     "event_structure": ("event_market_count", "event_consensus_p_yes", "event_disagreement_abs", "event_price_dispersion", "cross_platform_count", "cross_platform_disagreement_abs", "event_relative_rank", "platform"),
     "categorical_context": ("category", "canonical_category", "platform_category", "market_structure"),
+    "external_trust_news": ("ext_news_trust_score", "ext_news_credibility", "ext_news_corroboration", "ext_news_freshness", "ext_news_count"),
+    "external_trust_financial": ("ext_fin_trust_score", "ext_fin_liquidity", "ext_fin_volatility", "ext_fin_regime_score", "ext_fin_execution_risk"),
 }
 
 
@@ -827,6 +840,9 @@ def run_training_workflow(
     include_template_features: bool = True,
     news_csv_path: str | None = None,
     polls_csv_path: str | None = None,
+    news_trust_snapshot: str | None = None,
+    financial_trust_snapshot: str | None = None,
+    symbol_map_path: str | None = None,
     alpha: float = 1.0,
     target_mode: str = "residual",
     use_horizon_interactions: bool = True,
@@ -849,6 +865,15 @@ def run_training_workflow(
             ExternalEnrichmentConfig(
                 news_csv_path=news_csv_path,
                 polls_csv_path=polls_csv_path,
+            ),
+        )
+    if news_trust_snapshot or financial_trust_snapshot:
+        dataset = enrich_with_trust_snapshots(
+            dataset,
+            TrustSnapshotConfig(
+                news_snapshot_path=news_trust_snapshot,
+                financial_snapshot_path=financial_trust_snapshot,
+                symbol_map_path=symbol_map_path,
             ),
         )
     model, predictions, summary = train_resolved_model(
@@ -1229,6 +1254,9 @@ def main() -> int:
     parser.add_argument("--no-template-features", action="store_true")
     parser.add_argument("--news-csv", default="")
     parser.add_argument("--polls-csv", default="")
+    parser.add_argument("--news-trust-snapshot", default="", help="news trust snapshot JSONL path")
+    parser.add_argument("--financial-trust-snapshot", default="", help="financial trust snapshot JSONL path")
+    parser.add_argument("--symbol-map", default="", help="market template to symbol map YAML path")
     args = parser.parse_args()
 
     payload = run_training_workflow(
@@ -1241,6 +1269,9 @@ def main() -> int:
         include_template_features=not bool(args.no_template_features),
         news_csv_path=str(args.news_csv or "") or None,
         polls_csv_path=str(args.polls_csv or "") or None,
+        news_trust_snapshot=str(args.news_trust_snapshot or "") or None,
+        financial_trust_snapshot=str(args.financial_trust_snapshot or "") or None,
+        symbol_map_path=str(args.symbol_map or "") or None,
         alpha=float(args.alpha),
         target_mode=str(args.target_mode),
         use_horizon_interactions=not bool(args.disable_horizon_interactions),

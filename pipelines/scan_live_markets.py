@@ -5,12 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
 from features.external_enrichment import ExternalEnrichmentConfig, enrich_with_external_features
 from features.market_templates import build_market_template_features
+from features.trust_snapshot_ingest import TrustSnapshotConfig, enrich_with_trust_snapshots
 from pipelines.train_resolved_model import ResolvedLinearModel
 
 
@@ -20,6 +20,9 @@ def scan_live_markets(
     model: ResolvedLinearModel,
     news_csv_path: str | None = None,
     polls_csv_path: str | None = None,
+    news_trust_snapshot: str | None = None,
+    financial_trust_snapshot: str | None = None,
+    symbol_map_path: str | None = None,
     edge_threshold: float = 0.03,
 ) -> pd.DataFrame:
     if rows.empty:
@@ -40,6 +43,15 @@ def scan_live_markets(
                 news_csv_path=news_csv_path,
                 polls_csv_path=polls_csv_path,
                 snapshot_time_col=snapshot_col,
+            ),
+        )
+    if news_trust_snapshot or financial_trust_snapshot:
+        frame = enrich_with_trust_snapshots(
+            frame,
+            TrustSnapshotConfig(
+                news_snapshot_path=news_trust_snapshot,
+                financial_snapshot_path=financial_trust_snapshot,
+                symbol_map_path=symbol_map_path,
             ),
         )
     preds = model.predict_frame(frame)
@@ -65,6 +77,9 @@ def main() -> int:
     parser.add_argument("--edge-threshold", type=float, default=0.03)
     parser.add_argument("--news-csv", default="")
     parser.add_argument("--polls-csv", default="")
+    parser.add_argument("--news-trust-snapshot", default="", help="news trust snapshot JSONL path")
+    parser.add_argument("--financial-trust-snapshot", default="", help="financial trust snapshot JSONL path")
+    parser.add_argument("--symbol-map", default="", help="market template to symbol map YAML path")
     args = parser.parse_args()
 
     frame = _load_table(Path(args.input))
@@ -74,6 +89,9 @@ def main() -> int:
         model=model,
         news_csv_path=str(args.news_csv or "") or None,
         polls_csv_path=str(args.polls_csv or "") or None,
+        news_trust_snapshot=str(args.news_trust_snapshot or "") or None,
+        financial_trust_snapshot=str(args.financial_trust_snapshot or "") or None,
+        symbol_map_path=str(args.symbol_map or "") or None,
         edge_threshold=float(args.edge_threshold),
     )
     output = Path(args.output)

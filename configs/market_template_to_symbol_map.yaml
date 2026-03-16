@@ -1,0 +1,31 @@
+# Market template → financial instrument symbol mapping
+# Used by trust_snapshot_ingest.py to match MCA market templates
+# to Financial-Agent trust snapshots by instrument_id.
+#
+# Pattern matching: template_lower.startswith(pattern_lower) or pattern_lower in template_lower
+# Example: template "stock_price_spy" matches pattern "stock_price_" → symbols ["SPY", "QQQ"]
+
+mappings:
+  - template: "stock_price_"
+    symbols: ["SPY", "QQQ", "DIA", "IWM"]
+
+  - template: "crypto_"
+    symbols: ["BTC-USD", "ETH-USD", "SOL-USD"]
+
+  - template: "interest_rate_"
+    symbols: ["TLT", "IEF", "SHY", "TNX"]
+
+  - template: "commodity_"
+    symbols: ["GLD", "SLV", "USO", "GC=F", "CL=F"]
+
+  - template: "forex_"
+    symbols: ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "DXY"]
+
+  - template: "volatility_"
+    symbols: ["VIX", "UVXY", "VXX"]
+
+  - template: "sector_"
+    symbols: ["XLF", "XLK", "XLE", "XLV", "XLI"]
+
+  - template: "index_"
+    symbols: ["SPY", "QQQ", "DIA", "IWM"]

@@ -83,6 +83,14 @@ platforms:
     websocket:
       enabled: false
 
+external_trust:
+  news_snapshot_path: null          # --news-trust-snapshot override
+  financial_snapshot_path: null     # --financial-trust-snapshot override
+  symbol_map_path: "configs/market_template_to_symbol_map.yaml"
+  default_trust_score: 0.5
+  feature_prefix_news: "ext_news_"
+  feature_prefix_financial: "ext_fin_"
+
 api:
   tsfm_forecast:
     require_auth: true

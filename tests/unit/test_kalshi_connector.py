@@ -94,6 +94,38 @@ def test_fetch_events_returns_normalized_events() -> None:
     assert records[0]["platform"] == "kalshi"
 
 
+def test_fetch_historical_markets_uses_historical_endpoint() -> None:
+    calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={
+                "markets": [
+                    {
+                        "ticker": "HIST-1",
+                        "title": "Historical market",
+                        "event_ticker": "HIST-EVENT",
+                    }
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async def run_test() -> list[dict]:
+        async with httpx.AsyncClient(base_url="https://kalshi.example", transport=transport) as client:
+            connector = KalshiConnector(client=client, max_retries=0)
+            return await connector.fetch_historical_markets(limit=10, params={"mve_filter": "exclude"})
+
+    records = asyncio.run(run_test())
+
+    assert calls == ["/historical/markets"]
+    assert records[0]["market_id"] == "HIST-1"
+    assert records[0]["platform"] == "kalshi"
+
+
 def test_retries_with_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = 0
     sleeps: list[float] = []

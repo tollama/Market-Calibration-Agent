@@ -1,70 +1,73 @@
 {
   "canonical_category_counts": {
-    "business": 6,
-    "crypto": 70,
-    "culture": 341,
+    "business": 9,
+    "crypto": 969,
+    "culture": 90,
     "lifestyle": 11,
-    "macro": 7,
-    "other": 35,
-    "politics": 94,
+    "macro": 6,
+    "other": 49,
+    "politics": 153,
     "science_health": 39,
-    "sports": 772,
-    "technology": 13,
-    "weather": 9
+    "sports": 49,
+    "technology": 22,
+    "weather": 4
   },
   "category_counts": {
     "art": 28,
-    "business": 6,
+    "business": 9,
     "chess": 13,
     "coronavirus": 30,
-    "crypto": 67,
-    "entertainment": 264,
+    "crypto": 966,
+    "culture": 8,
+    "entertainment": 5,
     "games": 32,
     "global_politics": 3,
-    "macro": 7,
+    "macro": 6,
     "nba_playoffs": 1,
     "nfts": 3,
     "olympics": 2,
     "personal": 11,
-    "politics": 12,
+    "politics": 71,
     "pop_culture": 17,
     "science": 8,
     "science_health": 1,
     "space": 2,
-    "sports": 756,
+    "sports": 33,
     "tech": 2,
-    "technology": 3,
+    "technology": 12,
     "test": 7,
-    "unknown": 34,
+    "unknown": 48,
     "us_current_affairs": 79,
-    "weather": 9
+    "weather": 4
   },
   "market_structure_counts": {
-    "combo_multi_leg": 1000,
-    "standard_binary": 397
+    "standard_binary": 1401
   },
-  "markets": 1397,
+  "markets": 1401,
   "output_path": "data/derived/resolved/bootstrap_prediction_market_resolved_dataset.csv",
   "platform_fetch_counts": {
     "kalshi": {
       "event_count": 1000,
+      "historical_market_count": 1000,
       "market_count": 1000
     },
     "manifold": {
       "event_count": 0,
+      "historical_market_count": 0,
       "market_count": 1000
     },
     "polymarket": {
       "event_count": 0,
+      "historical_market_count": 0,
       "market_count": 500
     }
   },
   "platform_row_counts": {
     "kalshi": 1000,
-    "manifold": 121,
+    "manifold": 125,
     "polymarket": 276
   },
-  "resolved_rows": 1397,
+  "resolved_rows": 1401,
   "status": "ok",
-  "unique_events": 916
+  "unique_events": 396
 }

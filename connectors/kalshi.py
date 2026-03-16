@@ -134,6 +134,20 @@ class KalshiConnector:
             params=params,
         )
 
+    async def fetch_historical_markets(
+        self,
+        *,
+        limit: int = 500,
+        params: Mapping[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self._fetch_paginated(
+            endpoint="/historical/markets",
+            record_type="market",
+            items_key="markets",
+            limit=limit,
+            params=params,
+        )
+
     async def fetch_events(
         self,
         *,

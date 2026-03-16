@@ -79,6 +79,14 @@ The pack generator will normalize `canonical_category`, `platform_category`,
 and `market_structure`, then exclude non-standard market structures such as
 multi-leg combo contracts before training.
 
+The Kalshi side of this bootstrap now pulls both:
+
+- live settled markets with `mve_filter=exclude`
+- archived resolved markets from `/historical/markets` with `mve_filter=exclude`
+
+This is important because standard-binary historical markets are no longer well
+represented if you only query the live settled endpoint.
+
 ## Bootstrap From Manifold Only
 
 If you do not already have a resolved dataset file, you can bootstrap a minimal
@@ -131,5 +139,7 @@ successful real-data pack run. See:
 - `artifacts/forecasting_baseline_pack/direct_eval_all_platforms_v1/summary.md`
 - `artifacts/forecasting_baseline_pack/real_data_all_platforms_v2/status.json`
 - `artifacts/forecasting_baseline_pack/real_data_all_platforms_v2/promotion_decision.json`
+- `artifacts/forecasting_baseline_pack/real_data_all_platforms_v3/status.json`
+- `artifacts/forecasting_baseline_pack/real_data_all_platforms_v3/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_v1/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_v1/status.json`

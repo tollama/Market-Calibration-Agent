@@ -46,7 +46,8 @@ _PLATFORM_DEFAULTS: dict[Platform, dict[str, Any]] = {
         "fetch_events": False,
     },
     Platform.KALSHI: {
-        "market_params": {"status": "settled"},
+        "market_params": {"status": "settled", "mve_filter": "exclude"},
+        "historical_market_params": {"mve_filter": "exclude"},
         "event_params": {},
         "fetch_events": True,
     },
@@ -379,6 +380,19 @@ def _fetch_polymarket_markets_fallback(
     ]
 
 
+def _dedupe_market_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for record in records:
+        ticker = str(record.get("ticker") or record.get("id") or "").strip()
+        if ticker and ticker in seen:
+            continue
+        if ticker:
+            seen.add(ticker)
+        deduped.append(record)
+    return deduped
+
+
 async def _fetch_platform_records(
     *,
     platform: Platform,
@@ -391,6 +405,7 @@ async def _fetch_platform_records(
     connector = create_connector(platform, config=dict(config or {}))
     defaults = _PLATFORM_DEFAULTS[platform]
     market_params = dict(defaults["market_params"])
+    historical_market_params = dict(defaults.get("historical_market_params", {}))
     event_params = dict(defaults["event_params"])
     fetch_events = bool(defaults.get("fetch_events", True))
     try:
@@ -410,6 +425,17 @@ async def _fetch_platform_records(
                 )
             else:
                 raise
+        historical_markets: list[dict[str, Any]] = []
+        historical_fetch_count = 0
+        if platform == Platform.KALSHI:
+            fetch_historical_markets = getattr(connector, "fetch_historical_markets", None)
+            if callable(fetch_historical_markets):
+                historical_markets = await asyncio.wait_for(
+                    fetch_historical_markets(limit=limit, params=historical_market_params),
+                    timeout=45.0,
+                )
+                historical_fetch_count = int(len(historical_markets))
+                markets = _dedupe_market_records([*historical_markets, *list(markets)])
         events = await connector.fetch_events(limit=limit, params=event_params) if fetch_events else []
     finally:
         aclose = getattr(connector, "aclose", None)
@@ -417,8 +443,9 @@ async def _fetch_platform_records(
             await aclose()
     return {
         "platform": platform.value,
-        "markets": markets,
+        "markets": markets[:limit],
         "events": events,
+        "historical_market_count": historical_fetch_count if platform == Platform.KALSHI else 0,
     }
 
 
@@ -451,6 +478,7 @@ async def bootstrap_prediction_market_resolved_dataset(
         platform_fetch_counts[platform_name] = {
             "market_count": int(len(markets)),
             "event_count": int(len(events)),
+            "historical_market_count": int(payload.get("historical_market_count", 0)),
         }
         if platform_name == Platform.MANIFOLD.value:
             rows.extend(

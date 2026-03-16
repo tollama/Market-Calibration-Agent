@@ -85,6 +85,11 @@ use:
 python3 scripts/bootstrap_prediction_market_resolved_dataset.py
 ```
 
+That bootstrap now prefers standard-binary Kalshi history by combining:
+
+- live settled markets with `mve_filter=exclude`
+- historical Kalshi markets from `/historical/markets` with `mve_filter=exclude`
+
 ## Promotion Gate
 
 The committed pack includes `backtest_report/decision_summary.csv`. To evaluate
@@ -112,3 +117,6 @@ Exit codes:
   `artifacts/forecasting_baseline_pack/real_data_v1/status.json`.
 - The current cleaned all-platform benchmark run is recorded at
   `artifacts/forecasting_baseline_pack/real_data_all_platforms_v2/status.json`.
+- The current all-platform benchmark with restored standard-binary Kalshi
+  history is recorded at
+  `artifacts/forecasting_baseline_pack/real_data_all_platforms_v3/status.json`.

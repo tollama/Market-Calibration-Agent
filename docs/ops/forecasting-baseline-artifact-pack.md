@@ -52,6 +52,16 @@ The real-data generator now drops synthetic benchmark noise before training and
 evaluation, specifically rows classified as `category=test` and titles such as
 `Daily market` or `Test, do not trade`.
 
+For unified multi-platform datasets, the generator also normalizes:
+
+- `canonical_category`
+- `platform_category`
+- `market_structure`
+
+and excludes non-standard contract structures such as multi-leg combo markets
+before training. This keeps the benchmark focused on standard binary contracts
+instead of mixing in structurally different products.
+
 If local resolved inputs are not present, the script writes a blocked pack with:
 
 - `status.json`
@@ -100,3 +110,5 @@ Exit codes:
 - Use `scripts/generate_real_data_forecasting_pack.py` as the default path for
   that replacement. The current workspace run is recorded at
   `artifacts/forecasting_baseline_pack/real_data_v1/status.json`.
+- The current cleaned all-platform benchmark run is recorded at
+  `artifacts/forecasting_baseline_pack/real_data_all_platforms_v2/status.json`.

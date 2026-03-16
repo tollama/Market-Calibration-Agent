@@ -65,12 +65,15 @@ _NUMERIC_CANDIDATES = (
 )
 _CATEGORICAL_CANDIDATES = (
     "category",
+    "canonical_category",
     "liquidity_bucket",
     "tte_bucket",
     "template_group",
     "market_template",
     "poll_mode",
     "platform",
+    "platform_category",
+    "market_structure",
 )
 _FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     "market": ("market_prob", "p_yes"),
@@ -81,7 +84,7 @@ _FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     "external_news": ("news_articles_24h", "news_articles_72h", "news_recentness_hours", "news_match_quality", "news_weighted_count_72h"),
     "external_polls": ("poll_yes_support", "poll_margin", "poll_margin_abs", "poll_count_30d", "poll_days_since_last", "poll_match_quality", "poll_recency_weight", "poll_mode"),
     "event_structure": ("event_market_count", "event_consensus_p_yes", "event_disagreement_abs", "event_price_dispersion", "cross_platform_count", "cross_platform_disagreement_abs", "event_relative_rank", "platform"),
-    "categorical_context": ("category",),
+    "categorical_context": ("category", "canonical_category", "platform_category", "market_structure"),
 }
 
 
@@ -793,7 +796,10 @@ def _solve_ridge_weights(X: np.ndarray, y: np.ndarray, *, alpha: float) -> np.nd
     ridge[0, 0] = 0.0
     lhs = X_design.T @ X_design + ridge
     rhs = X_design.T @ y
-    return np.linalg.pinv(lhs) @ rhs
+    try:
+        return np.linalg.solve(lhs, rhs)
+    except np.linalg.LinAlgError:
+        return np.linalg.pinv(lhs) @ rhs
 
 
 def _candidate_alphas(config: ResolvedModelConfig) -> list[float]:

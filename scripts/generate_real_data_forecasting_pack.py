@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from features.prediction_market_normalization import augment_prediction_market_context
 from pipelines.generate_backtest_report import EventHoldoutConfig, WalkForwardConfig, generate_backtest_report
 from pipelines.train_resolved_model import (
     ResolvedModelConfig,
@@ -137,6 +138,7 @@ def _train_from_dataset(dataset: pd.DataFrame) -> tuple[ResolvedLinearModel, pd.
         model_config=ResolvedModelConfig(
             target_mode="residual",
             use_horizon_interactions=True,
+            feature_group_grid=(),
         ),
     )
     ablation = run_feature_ablation(
@@ -144,6 +146,7 @@ def _train_from_dataset(dataset: pd.DataFrame) -> tuple[ResolvedLinearModel, pd.
         model_config=ResolvedModelConfig(
             target_mode="residual",
             use_horizon_interactions=True,
+            feature_group_grid=(),
         ),
     )
     return model, predictions, summary, ablation
@@ -153,7 +156,10 @@ def _dataset_summary(dataset: pd.DataFrame) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "rows": int(len(dataset)),
         "markets": int(dataset["market_id"].nunique()) if "market_id" in dataset.columns else 0,
+        "platforms": sorted(dataset["platform"].dropna().astype(str).unique().tolist()) if "platform" in dataset.columns else [],
         "categories": sorted(dataset["category"].dropna().astype(str).unique().tolist()) if "category" in dataset.columns else [],
+        "canonical_categories": sorted(dataset["canonical_category"].dropna().astype(str).unique().tolist()) if "canonical_category" in dataset.columns else [],
+        "market_structures": sorted(dataset["market_structure"].dropna().astype(str).unique().tolist()) if "market_structure" in dataset.columns else [],
         "liquidity_buckets": sorted(dataset["liquidity_bucket"].dropna().astype(str).unique().tolist()) if "liquidity_bucket" in dataset.columns else [],
         "tte_buckets": sorted(dataset["tte_bucket"].dropna().astype(str).unique().tolist()) if "tte_bucket" in dataset.columns else [],
         "horizons_hours": sorted(pd.to_numeric(dataset["horizon_hours"], errors="coerce").dropna().astype(int).unique().tolist()) if "horizon_hours" in dataset.columns else [],
@@ -165,6 +171,7 @@ def _clean_resolved_dataset(dataset: pd.DataFrame) -> tuple[pd.DataFrame, dict[s
     if dataset.empty:
         return dataset, {"excluded_rows": 0, "reasons": {}}
 
+    dataset = augment_prediction_market_context(dataset)
     excluded = pd.Series(False, index=dataset.index)
     reasons: dict[str, int] = {}
 
@@ -180,6 +187,12 @@ def _clean_resolved_dataset(dataset: pd.DataFrame) -> tuple[pd.DataFrame, dict[s
         if title_mask.any():
             excluded |= title_mask
             reasons["title:test_or_daily_market"] = int(title_mask.sum())
+
+    if "market_structure" in dataset.columns:
+        structure_mask = ~dataset["market_structure"].astype("string").isin(["standard_binary", "player_prop"])
+        if structure_mask.any():
+            excluded |= structure_mask
+            reasons["market_structure:non_standard"] = int(structure_mask.sum())
 
     cleaned = dataset.loc[~excluded].reset_index(drop=True)
     summary = {
@@ -199,6 +212,9 @@ def _render_success_readme(
     report_summary: dict[str, Any],
 ) -> str:
     categories = ", ".join(dataset_summary.get("categories", [])) or "none"
+    canonical_categories = ", ".join(dataset_summary.get("canonical_categories", [])) or "none"
+    platforms = ", ".join(dataset_summary.get("platforms", [])) or "none"
+    market_structures = ", ".join(dataset_summary.get("market_structures", [])) or "none"
     liquidity_buckets = ", ".join(dataset_summary.get("liquidity_buckets", [])) or "none"
     tte_buckets = ", ".join(dataset_summary.get("tte_buckets", [])) or "none"
     recommended = ", ".join(promotion.get("recommended_variants", [])) or "none"
@@ -215,7 +231,10 @@ def _render_success_readme(
                 "Dataset summary:",
                 f"- rows: `{dataset_summary.get('rows', 0)}`",
                 f"- markets: `{dataset_summary.get('markets', 0)}`",
+                f"- platforms: `{platforms}`",
                 f"- categories: `{categories}`",
+                f"- canonical categories: `{canonical_categories}`",
+                f"- market structures: `{market_structures}`",
                 f"- liquidity buckets: `{liquidity_buckets}`",
                 f"- tte buckets: `{tte_buckets}`",
                 f"- excluded rows during cleaning: `{cleaning_summary.get('excluded_rows', 0)}`",

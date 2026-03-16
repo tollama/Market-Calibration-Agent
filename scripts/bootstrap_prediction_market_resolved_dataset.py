@@ -23,10 +23,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from connectors.factory import create_connector
+from features.prediction_market_normalization import (
+    augment_prediction_market_context,
+    coalesce_market_category,
+    normalize_category_token,
+)
 from schemas.enums import Platform
 from scripts.bootstrap_manifold_resolved_dataset import (
     _infer_category,
-    _infer_event_id,
     _infer_template,
     _liquidity_bucket,
     _parse_dt,
@@ -73,14 +77,6 @@ _KALSHI_CATEGORY_PREFIXES: tuple[tuple[str, str], ...] = (
     ("KXCPI", "macro"),
     ("KXFED", "macro"),
 )
-
-
-def _normalize_category_name(value: Any) -> str:
-    token = str(value or "").strip().lower().replace("/", " ").replace("-", " ")
-    token = "_".join(part for part in token.split() if part)
-    return token or "unknown"
-
-
 def _to_snake_case(value: str) -> str:
     step_1 = _SNAKE_CASE_1.sub(r"\1_\2", value)
     return _SNAKE_CASE_2.sub(r"\1_\2", step_1).replace("-", "_").lower()
@@ -110,7 +106,7 @@ def _safe_snapshot_ts(
 
 
 def _infer_kalshi_category(record: Mapping[str, Any], event_row: Mapping[str, Any]) -> str:
-    category = _normalize_category_name(event_row.get("category"))
+    category = normalize_category_token(event_row.get("category"))
     if category != "unknown":
         return category
 
@@ -201,7 +197,9 @@ def normalize_polymarket_market_to_dataset_row(
         snapshot_ts=_parse_dt(record.get("updated_at")) or _parse_dt(record.get("created_at")),
         resolution_ts=resolution_ts,
     )
-    category = _normalize_category_name(record.get("category"))
+    title = str(record.get("question") or "")
+    slug = str(record.get("slug") or "")
+    category = normalize_category_token(record.get("category"))
 
     event_rows = record.get("events")
     event_row = event_rows[0] if isinstance(event_rows, list) and event_rows else None
@@ -217,7 +215,14 @@ def normalize_polymarket_market_to_dataset_row(
         event_id_value = event_row.get("id") or event_row.get("slug") or event_row.get("ticker")
         if event_id_value:
             event_id = f"polymarket:{event_id_value}"
-        category = _normalize_category_name(event_row.get("category") or category)
+        category = normalize_category_token(event_row.get("category") or category)
+
+    category = coalesce_market_category(
+        category=category,
+        title=title,
+        slug=slug,
+        platform="polymarket",
+    )
 
     liquidity = _to_float(record.get("liquidity_num") or record.get("liquidity"), default=0.0)
     volume_24h = _to_float(record.get("volume24hr") or record.get("volume_24hr"), default=0.0)
@@ -235,8 +240,6 @@ def normalize_polymarket_market_to_dataset_row(
     if not (0.0 <= market_prob <= 1.0):
         market_prob = yes_price
 
-    title = str(record.get("question") or "")
-    slug = str(record.get("slug") or "")
     template_group, market_template, template_confidence, template_entity_count = _infer_template(title, slug, category)
     return {
         "market_id": f"polymarket:{record.get('id', '')}",
@@ -479,6 +482,8 @@ async def bootstrap_prediction_market_resolved_dataset(
             )
 
     dataset = pd.DataFrame(rows).sort_values(["resolution_ts", "market_id"]).reset_index(drop=True) if rows else pd.DataFrame()
+    if not dataset.empty:
+        dataset = augment_prediction_market_context(dataset)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.to_csv(output_path, index=False)
 
@@ -496,6 +501,14 @@ async def bootstrap_prediction_market_resolved_dataset(
             str(key): int(value)
             for key, value in Counter(dataset["category"].fillna("unknown")).most_common()
         } if not dataset.empty else {},
+        "canonical_category_counts": {
+            str(key): int(value)
+            for key, value in Counter(dataset["canonical_category"].fillna("other")).most_common()
+        } if not dataset.empty and "canonical_category" in dataset.columns else {},
+        "market_structure_counts": {
+            str(key): int(value)
+            for key, value in Counter(dataset["market_structure"].fillna("unknown")).most_common()
+        } if not dataset.empty and "market_structure" in dataset.columns else {},
         "unique_events": int(dataset["event_id"].nunique()) if not dataset.empty else 0,
     }
     summary_path = output_path.with_suffix(".summary.json")

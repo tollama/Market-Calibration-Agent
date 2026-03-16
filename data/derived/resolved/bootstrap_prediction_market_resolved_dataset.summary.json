@@ -1,53 +1,70 @@
 {
-  "category_counts": {
-    "art": 55,
-    "business": 127,
-    "chess": 49,
-    "coronavirus": 135,
-    "crypto": 292,
-    "entertainment": 1,
-    "games": 15,
-    "global_politics": 51,
-    "macro": 5,
-    "nba_playoffs": 6,
-    "nfts": 101,
-    "olympics": 16,
-    "personal": 2,
-    "poker": 7,
-    "politics": 2,
-    "pop_culture": 183,
-    "science": 51,
-    "space": 4,
-    "sports": 1625,
-    "tech": 4,
-    "test": 3,
-    "ukraine_&_russia": 46,
-    "unknown": 188650,
-    "us_current_affairs": 314,
-    "weather": 2
+  "canonical_category_counts": {
+    "business": 6,
+    "crypto": 70,
+    "culture": 341,
+    "lifestyle": 11,
+    "macro": 7,
+    "other": 35,
+    "politics": 94,
+    "science_health": 39,
+    "sports": 772,
+    "technology": 13,
+    "weather": 9
   },
-  "markets": 191745,
+  "category_counts": {
+    "art": 28,
+    "business": 6,
+    "chess": 13,
+    "coronavirus": 30,
+    "crypto": 67,
+    "entertainment": 264,
+    "games": 32,
+    "global_politics": 3,
+    "macro": 7,
+    "nba_playoffs": 1,
+    "nfts": 3,
+    "olympics": 2,
+    "personal": 11,
+    "politics": 12,
+    "pop_culture": 17,
+    "science": 8,
+    "science_health": 1,
+    "space": 2,
+    "sports": 756,
+    "tech": 2,
+    "technology": 3,
+    "test": 7,
+    "unknown": 34,
+    "us_current_affairs": 79,
+    "weather": 9
+  },
+  "market_structure_counts": {
+    "combo_multi_leg": 1000,
+    "standard_binary": 397
+  },
+  "markets": 1397,
   "output_path": "data/derived/resolved/bootstrap_prediction_market_resolved_dataset.csv",
   "platform_fetch_counts": {
     "kalshi": {
-      "event_count": 500,
-      "market_count": 500
+      "event_count": 1000,
+      "market_count": 1000
     },
     "manifold": {
       "event_count": 0,
-      "market_count": 500
+      "market_count": 1000
     },
     "polymarket": {
-      "event_count": 264031,
-      "market_count": 569908
+      "event_count": 0,
+      "market_count": 500
     }
   },
   "platform_row_counts": {
-    "kalshi": 500,
-    "manifold": 47,
-    "polymarket": 191199
+    "kalshi": 1000,
+    "manifold": 121,
+    "polymarket": 276
   },
-  "resolved_rows": 191746,
+  "resolved_rows": 1397,
   "status": "ok",
-  "unique_events": 37984
+  "unique_events": 916
 }

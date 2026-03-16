@@ -91,6 +91,74 @@ def test_normalize_kalshi_market_to_dataset_row_infers_sports_from_ticker_prefix
     assert row["category"] == "sports"
 
 
+def test_bootstrap_prediction_market_resolved_dataset_adds_canonical_category_and_structure(
+    tmp_path, monkeypatch
+) -> None:
+    class _FakeConnector:
+        def __init__(self, markets, events) -> None:
+            self._markets = list(markets)
+            self._events = list(events)
+
+        async def fetch_markets(self, *, limit: int = 500, params=None):
+            return self._markets[:limit]
+
+        async def fetch_events(self, *, limit: int = 500, params=None):
+            return self._events[:limit]
+
+        async def aclose(self) -> None:
+            return None
+
+    connectors = {
+        Platform.POLYMARKET: _FakeConnector(
+            markets=[],
+            events=[],
+        ),
+        Platform.KALSHI: _FakeConnector(
+            markets=[
+                {
+                    "ticker": "KXMVECROSSCATEGORY-ABC",
+                    "event_ticker": "KXMVESPORTSMULTIGAMEEXTENDED-XYZ",
+                    "market_type": "binary",
+                    "result": "no",
+                    "settlement_ts": "2026-03-16T00:35:21.013877Z",
+                    "close_time": "2026-03-16T00:34:21Z",
+                    "previous_price_dollars": "0.33",
+                    "title": "yes Golden State,yes Portland,yes Over 230.5 points scored",
+                }
+            ],
+            events=[],
+        ),
+        Platform.MANIFOLD: _FakeConnector(
+            markets=[],
+            events=[],
+        ),
+    }
+
+    def _fake_create_connector(platform: Platform, *, config=None):
+        return connectors[platform]
+
+    monkeypatch.setattr(
+        "scripts.bootstrap_prediction_market_resolved_dataset.create_connector",
+        _fake_create_connector,
+    )
+
+    output = tmp_path / "bootstrap_prediction_market_resolved_dataset.csv"
+    summary = asyncio.run(
+        bootstrap_prediction_market_resolved_dataset(
+            output_path=output,
+            limit_per_platform=10,
+        )
+    )
+
+    assert summary["canonical_category_counts"]["sports"] == 1
+    assert summary["market_structure_counts"]["combo_multi_leg"] == 1
+    frame = pd.read_csv(output)
+    assert frame.loc[0, "canonical_category"] == "sports"
+    assert frame.loc[0, "market_structure"] == "combo_multi_leg"
+    assert frame.loc[0, "platform_category"] == "kalshi:sports"
+    assert frame.loc[0, "is_standard_market"] == 0
+
+
 def test_bootstrap_prediction_market_resolved_dataset_combines_all_supported_platforms(
     tmp_path, monkeypatch
 ) -> None:
@@ -185,5 +253,9 @@ def test_bootstrap_prediction_market_resolved_dataset_combines_all_supported_pla
     assert summary["platform_row_counts"]["polymarket"] == 1
     assert summary["platform_row_counts"]["kalshi"] == 1
     assert summary["platform_row_counts"]["manifold"] == 1
+    assert "canonical_category_counts" in summary
+    assert "market_structure_counts" in summary
     frame = pd.read_csv(output)
     assert set(frame["platform"]) == {"polymarket", "kalshi", "manifold"}
+    assert "canonical_category" in frame.columns
+    assert "market_structure" in frame.columns

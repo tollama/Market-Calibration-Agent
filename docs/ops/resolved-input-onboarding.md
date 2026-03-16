@@ -72,8 +72,12 @@ Then build the real-data pack from that file:
 ```bash
 python3 scripts/generate_real_data_forecasting_pack.py \
   --input data/derived/resolved/bootstrap_prediction_market_resolved_dataset.csv \
-  --output-dir artifacts/forecasting_baseline_pack/real_data_v1
+  --output-dir artifacts/forecasting_baseline_pack/real_data_all_platforms_v2
 ```
+
+The pack generator will normalize `canonical_category`, `platform_category`,
+and `market_structure`, then exclude non-standard market structures such as
+multi-leg combo contracts before training.
 
 ## Bootstrap From Manifold Only
 
@@ -125,5 +129,7 @@ successful real-data pack run. See:
 - `data/derived/resolved/bootstrap_prediction_market_resolved_dataset.summary.json`
 - `artifacts/forecasting_baseline_pack/direct_eval_all_platforms_v1/decision_summary.csv`
 - `artifacts/forecasting_baseline_pack/direct_eval_all_platforms_v1/summary.md`
+- `artifacts/forecasting_baseline_pack/real_data_all_platforms_v2/status.json`
+- `artifacts/forecasting_baseline_pack/real_data_all_platforms_v2/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_v1/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_v1/status.json`

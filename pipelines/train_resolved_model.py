@@ -105,6 +105,11 @@ class ResolvedModelConfig:
     )
     target_mode: str = "direct"
     use_horizon_interactions: bool = False
+    sample_weight_scheme: str = "none"
+    sample_weight_key: str = "platform_category"
+    sample_weight_power: float = 0.5
+    sample_weight_min: float = 0.5
+    sample_weight_cap: float = 3.0
 
 
 @dataclass
@@ -121,6 +126,8 @@ class ResolvedModelMetrics:
     validation_objective: float
     selected_drop_feature_groups: list[str]
     feature_count: int
+    sample_weight_scheme: str
+    sample_weight_key: str
 
 
 class ResolvedLinearModel:
@@ -198,7 +205,13 @@ class ResolvedLinearModel:
         X_train = self._fit_transform(train)
         y_train_labels = train[label_col].astype(float).to_numpy()
         y_train_target = self._training_target(train, label_col=label_col)
-        self._fit_linear_weights(X_train, y_train_target, alpha=self.selected_alpha)
+        train_sample_weight = _sample_weight_series(train, self.config)
+        self._fit_linear_weights(
+            X_train,
+            y_train_target,
+            alpha=self.selected_alpha,
+            sample_weight=train_sample_weight.to_numpy(dtype=float),
+        )
 
         if not validation_windows:
             train_pred = self.predict_proba(train)
@@ -223,6 +236,8 @@ class ResolvedLinearModel:
             validation_objective=float(validation_objective),
             selected_drop_feature_groups=list(self.selected_drop_feature_groups),
             feature_count=int(len(self.feature_names)),
+            sample_weight_scheme=str(self.config.sample_weight_scheme),
+            sample_weight_key=str(self.config.sample_weight_key),
         )
         return self.metrics
 
@@ -453,10 +468,22 @@ class ResolvedLinearModel:
         matrices = [part for part in numeric_parts + interaction_parts + categorical_parts if part.size > 0]
         return np.concatenate(matrices, axis=1) if matrices else np.zeros((len(frame), 0), dtype=float)
 
-    def _fit_linear_weights(self, X: np.ndarray, y: np.ndarray, *, alpha: float | None = None) -> None:
+    def _fit_linear_weights(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        alpha: float | None = None,
+        sample_weight: np.ndarray | None = None,
+    ) -> None:
         if X.ndim != 2:
             raise ValueError("X must be 2-dimensional")
-        coeff = _solve_ridge_weights(X, y, alpha=float(self.config.alpha if alpha is None else alpha))
+        coeff = _solve_ridge_weights(
+            X,
+            y,
+            alpha=float(self.config.alpha if alpha is None else alpha),
+            sample_weight=sample_weight,
+        )
         self.intercept = float(coeff[0])
         self.coefficients = [float(value) for value in coeff[1:]]
 
@@ -510,6 +537,7 @@ class ResolvedLinearModel:
                 validation_model: list[float] = []
                 validation_market: list[float] = []
                 validation_labels: list[int] = []
+                validation_weights: list[float] = []
                 for train, validation in validation_windows:
                     temp_model = ResolvedLinearModel(
                         ResolvedModelConfig(
@@ -525,6 +553,11 @@ class ResolvedLinearModel:
                             feature_group_grid=(),
                             target_mode=self.config.target_mode,
                             use_horizon_interactions=self.config.use_horizon_interactions,
+                            sample_weight_scheme=self.config.sample_weight_scheme,
+                            sample_weight_key=self.config.sample_weight_key,
+                            sample_weight_power=self.config.sample_weight_power,
+                            sample_weight_min=self.config.sample_weight_min,
+                            sample_weight_cap=self.config.sample_weight_cap,
                         )
                     )
                     temp_model.fit(train, label_col=label_col)
@@ -532,6 +565,7 @@ class ResolvedLinearModel:
                     validation_model.extend(validation_frame["pred"].tolist())
                     validation_market.extend(validation_frame["baseline_pred"].tolist())
                     validation_labels.extend(validation[label_col].astype(int).tolist())
+                    validation_weights.extend(_sample_weight_series(validation, self.config).tolist())
 
                 if not validation_labels:
                     continue
@@ -539,11 +573,17 @@ class ResolvedLinearModel:
                     validation_model,
                     validation_market,
                     validation_labels,
+                    sample_weight=validation_weights,
                     grid_size=self.config.blend_grid_size,
                     selection_metric=self.config.selection_metric,
                 )
                 blended = _blend_predictions(validation_model, validation_market, blend_weight)
-                objective = _selection_objective(blended, validation_labels, selection_metric=self.config.selection_metric)
+                objective = _selection_objective(
+                    blended,
+                    validation_labels,
+                    selection_metric=self.config.selection_metric,
+                    sample_weight=validation_weights,
+                )
                 if objective < best_objective - 1e-12 or (
                     abs(objective - best_objective) <= 1e-12 and blend_weight < best_blend
                 ):
@@ -553,9 +593,9 @@ class ResolvedLinearModel:
                     best_drop_groups = tuple(drop_groups)
                     best_metrics = {
                         "objective": float(objective),
-                        "brier_model": float(brier_score(validation_model, validation_labels)),
-                        "brier_blended": float(brier_score(blended, validation_labels)),
-                        "brier_baseline": float(brier_score(validation_market, validation_labels)),
+                        "brier_model": float(_weighted_brier_score(validation_model, validation_labels, sample_weight=validation_weights)),
+                        "brier_blended": float(_weighted_brier_score(blended, validation_labels, sample_weight=validation_weights)),
+                        "brier_baseline": float(_weighted_brier_score(validation_market, validation_labels, sample_weight=validation_weights)),
                     }
         if best_metrics is None:
             return float(self.config.alpha), 1.0, tuple(str(value) for value in self.config.drop_feature_groups), {
@@ -642,6 +682,8 @@ def run_training_workflow(
     alpha: float = 1.0,
     target_mode: str = "residual",
     use_horizon_interactions: bool = True,
+    sample_weight_scheme: str = "none",
+    sample_weight_key: str = "platform_category",
     run_ablation: bool = False,
     ablation_report_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -667,6 +709,8 @@ def run_training_workflow(
             alpha=float(alpha),
             target_mode=str(target_mode),
             use_horizon_interactions=bool(use_horizon_interactions),
+            sample_weight_scheme=str(sample_weight_scheme),
+            sample_weight_key=str(sample_weight_key),
         ),
     )
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -681,6 +725,8 @@ def run_training_workflow(
                 alpha=float(alpha),
                 target_mode=str(target_mode),
                 use_horizon_interactions=bool(use_horizon_interactions),
+                sample_weight_scheme=str(sample_weight_scheme),
+                sample_weight_key=str(sample_weight_key),
             ),
         )
         resolved_ablation_path = ablation_report_path or (output_dir / "feature_ablation_summary.csv")
@@ -718,6 +764,8 @@ def run_training_workflow(
         "report": report_summary,
         "target_mode": target_mode,
         "use_horizon_interactions": bool(use_horizon_interactions),
+        "sample_weight_scheme": str(sample_weight_scheme),
+        "sample_weight_key": str(sample_weight_key),
         "ablation_summary_path": ablation_summary_path,
     }
     summary_path = output_dir / "resolved_model_summary.json"
@@ -759,6 +807,7 @@ def _select_blend_weight(
     market_pred: Sequence[float],
     labels: Sequence[int],
     *,
+    sample_weight: Sequence[float] | None = None,
     grid_size: int,
     selection_metric: str = "joint",
 ) -> float:
@@ -767,7 +816,12 @@ def _select_blend_weight(
     for step in range(max(2, int(grid_size))):
         weight = step / (max(2, int(grid_size)) - 1)
         blended = _blend_predictions(model_pred, market_pred, weight)
-        score = _selection_objective(blended, labels, selection_metric=selection_metric)
+        score = _selection_objective(
+            blended,
+            labels,
+            selection_metric=selection_metric,
+            sample_weight=sample_weight,
+        )
         if score < best_objective - 1e-12 or (
             abs(score - best_objective) <= 1e-12 and weight < best_weight
         ):
@@ -781,17 +835,35 @@ def _selection_objective(
     labels: Sequence[int],
     *,
     selection_metric: str,
+    sample_weight: Sequence[float] | None = None,
 ) -> float:
     metric = str(selection_metric).strip().lower()
     if metric == "brier":
-        return float(brier_score(preds, labels))
+        return float(_weighted_brier_score(preds, labels, sample_weight=sample_weight))
     if metric == "log_loss":
-        return float(log_loss(preds, labels))
-    return float(brier_score(preds, labels) + (0.25 * log_loss(preds, labels)))
+        return float(_weighted_log_loss(preds, labels, sample_weight=sample_weight))
+    return float(
+        _weighted_brier_score(preds, labels, sample_weight=sample_weight)
+        + (0.25 * _weighted_log_loss(preds, labels, sample_weight=sample_weight))
+    )
 
 
-def _solve_ridge_weights(X: np.ndarray, y: np.ndarray, *, alpha: float) -> np.ndarray:
+def _solve_ridge_weights(
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    alpha: float,
+    sample_weight: np.ndarray | None = None,
+) -> np.ndarray:
     X_design = np.concatenate([np.ones((len(X), 1), dtype=float), X], axis=1)
+    if sample_weight is not None:
+        weight = np.asarray(sample_weight, dtype=float).reshape(-1)
+        if len(weight) != len(X_design):
+            raise ValueError("sample_weight must align to X rows")
+        safe_weight = np.clip(weight, 1e-9, None)
+        root_weight = np.sqrt(safe_weight).reshape(-1, 1)
+        X_design = X_design * root_weight
+        y = np.asarray(y, dtype=float).reshape(-1) * root_weight.reshape(-1)
     ridge = np.eye(X_design.shape[1], dtype=float) * float(alpha)
     ridge[0, 0] = 0.0
     lhs = X_design.T @ X_design + ridge
@@ -800,6 +872,66 @@ def _solve_ridge_weights(X: np.ndarray, y: np.ndarray, *, alpha: float) -> np.nd
         return np.linalg.solve(lhs, rhs)
     except np.linalg.LinAlgError:
         return np.linalg.pinv(lhs) @ rhs
+
+
+def _sample_weight_series(frame: pd.DataFrame, config: ResolvedModelConfig) -> pd.Series:
+    if frame.empty:
+        return pd.Series(dtype=float)
+
+    scheme = str(config.sample_weight_scheme).strip().lower()
+    if scheme in {"", "none"}:
+        return pd.Series(np.ones(len(frame), dtype=float), index=frame.index)
+
+    key = str(config.sample_weight_key).strip()
+    if key not in frame.columns:
+        return pd.Series(np.ones(len(frame), dtype=float), index=frame.index)
+
+    segment = frame[key].astype("string").fillna("__missing__")
+    counts = segment.value_counts(dropna=False)
+    if counts.empty:
+        return pd.Series(np.ones(len(frame), dtype=float), index=frame.index)
+
+    reference = float(np.median(counts.astype(float).to_numpy()))
+    if reference <= 0.0:
+        reference = 1.0
+
+    power = float(config.sample_weight_power)
+    min_weight = max(float(config.sample_weight_min), 1e-6)
+    max_weight = max(float(config.sample_weight_cap), min_weight)
+
+    raw = segment.map(lambda value: (reference / max(float(counts.get(value, 1.0)), 1.0)) ** power).astype(float)
+    clipped = raw.clip(lower=min_weight, upper=max_weight)
+    normalized = clipped / max(float(clipped.mean()), 1e-9)
+    return normalized.astype(float)
+
+
+def _weighted_brier_score(
+    preds: Sequence[float],
+    labels: Sequence[int],
+    *,
+    sample_weight: Sequence[float] | None = None,
+) -> float:
+    if sample_weight is None:
+        return float(brier_score(preds, labels))
+    pred_arr = np.asarray([float(value) for value in preds], dtype=float)
+    label_arr = np.asarray([float(value) for value in labels], dtype=float)
+    weight_arr = np.asarray([float(value) for value in sample_weight], dtype=float)
+    return float(np.average((pred_arr - label_arr) ** 2, weights=weight_arr))
+
+
+def _weighted_log_loss(
+    preds: Sequence[float],
+    labels: Sequence[int],
+    *,
+    sample_weight: Sequence[float] | None = None,
+) -> float:
+    if sample_weight is None:
+        return float(log_loss(preds, labels))
+    pred_arr = np.clip(np.asarray([float(value) for value in preds], dtype=float), 1e-8, 1.0 - 1e-8)
+    label_arr = np.asarray([float(value) for value in labels], dtype=float)
+    weight_arr = np.asarray([float(value) for value in sample_weight], dtype=float)
+    losses = -(label_arr * np.log(pred_arr) + (1.0 - label_arr) * np.log(1.0 - pred_arr))
+    return float(np.average(losses, weights=weight_arr))
 
 
 def _candidate_alphas(config: ResolvedModelConfig) -> list[float]:
@@ -866,6 +998,8 @@ def main() -> int:
     parser.add_argument("--alpha", type=float, default=1.0)
     parser.add_argument("--target-mode", default="residual", choices=["direct", "residual"])
     parser.add_argument("--disable-horizon-interactions", action="store_true")
+    parser.add_argument("--sample-weight-scheme", default="none")
+    parser.add_argument("--sample-weight-key", default="platform_category")
     parser.add_argument("--run-ablation", action="store_true")
     parser.add_argument("--ablation-report-path", default="")
     parser.add_argument("--no-template-features", action="store_true")
@@ -886,6 +1020,8 @@ def main() -> int:
         alpha=float(args.alpha),
         target_mode=str(args.target_mode),
         use_horizon_interactions=not bool(args.disable_horizon_interactions),
+        sample_weight_scheme=str(args.sample_weight_scheme),
+        sample_weight_key=str(args.sample_weight_key),
         run_ablation=bool(args.run_ablation),
         ablation_report_path=Path(args.ablation_report_path) if args.ablation_report_path else None,
     )

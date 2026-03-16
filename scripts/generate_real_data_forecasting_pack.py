@@ -139,16 +139,38 @@ def _train_from_dataset(dataset: pd.DataFrame) -> tuple[ResolvedLinearModel, pd.
             target_mode="residual",
             use_horizon_interactions=True,
             feature_group_grid=(),
+            sample_weight_scheme="segment_balanced",
+            sample_weight_key="canonical_category",
+            sample_weight_power=0.25,
         ),
     )
-    ablation = run_feature_ablation(
-        dataset,
-        model_config=ResolvedModelConfig(
-            target_mode="residual",
-            use_horizon_interactions=True,
-            feature_group_grid=(),
-        ),
-    )
+    if len(dataset) > 1000:
+        ablation = pd.DataFrame(
+            [
+                {
+                    "feature_group": "all_features",
+                    "row_count": int(len(dataset)),
+                    "feature_count": int(summary["feature_count"]),
+                    "brier_model": float(summary["brier_model"]),
+                    "brier_blended": float(summary["brier_blended"]),
+                    "brier_baseline": float(summary["brier_baseline"]),
+                    "target_mode": str(summary["target_mode"]),
+                    "blend_weight_model": float(summary["blend_weight_model"]),
+                }
+            ]
+        )
+    else:
+        ablation = run_feature_ablation(
+            dataset,
+            model_config=ResolvedModelConfig(
+                target_mode="residual",
+                use_horizon_interactions=True,
+                feature_group_grid=(),
+                sample_weight_scheme="segment_balanced",
+                sample_weight_key="canonical_category",
+                sample_weight_power=0.25,
+            ),
+        )
     return model, predictions, summary, ablation
 
 

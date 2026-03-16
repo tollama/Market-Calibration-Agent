@@ -91,3 +91,38 @@ def test_run_feature_ablation_returns_group_comparison_rows() -> None:
         "brier_baseline",
         "target_mode",
     }
+
+
+def test_train_resolved_model_supports_platform_category_weighting() -> None:
+    rows = _training_rows().copy()
+    rows["platform"] = ["kalshi"] * 8 + ["polymarket"] * 4
+    rows["canonical_category"] = ["crypto"] * 8 + ["politics"] * 4
+    rows["platform_category"] = [
+        "kalshi:crypto",
+        "kalshi:crypto",
+        "kalshi:crypto",
+        "kalshi:crypto",
+        "kalshi:crypto",
+        "kalshi:crypto",
+        "kalshi:crypto",
+        "kalshi:crypto",
+        "polymarket:politics",
+        "polymarket:politics",
+        "polymarket:politics",
+        "polymarket:politics",
+    ]
+
+    model, predictions, summary = train_resolved_model(
+        rows,
+        model_config=ResolvedModelConfig(
+            target_mode="residual",
+            use_horizon_interactions=True,
+            sample_weight_scheme="segment_balanced",
+            sample_weight_key="platform_category",
+        ),
+    )
+
+    assert isinstance(model, ResolvedLinearModel)
+    assert summary["sample_weight_scheme"] == "segment_balanced"
+    assert summary["sample_weight_key"] == "platform_category"
+    assert predictions["recalibrated_pred"].between(0, 1).all()

@@ -62,6 +62,10 @@ and excludes non-standard contract structures such as multi-leg combo markets
 before training. This keeps the benchmark focused on standard binary contracts
 instead of mixing in structurally different products.
 
+On mixed-platform packs the trainer also applies light segment balancing
+against `canonical_category` so one dominant platform/category slice does not
+dictate model selection by volume alone.
+
 If local resolved inputs are not present, the script writes a blocked pack with:
 
 - `status.json`
@@ -120,3 +124,6 @@ Exit codes:
 - The current all-platform benchmark with restored standard-binary Kalshi
   history is recorded at
   `artifacts/forecasting_baseline_pack/real_data_all_platforms_v3/status.json`.
+- The current tuned all-platform benchmark with light segment balancing is
+  recorded at
+  `artifacts/forecasting_baseline_pack/real_data_all_platforms_v6/status.json`.

@@ -27,7 +27,13 @@ Key options:
 
 - `--target-mode direct|residual`
 - `--disable-horizon-interactions`
+- `--sample-weight-scheme none|segment_balanced`
+- `--sample-weight-key <column>`
 - `--run-ablation`
 - `--ablation-report-path`
 
 Current default workflow uses `target_mode=residual` with horizon interactions enabled in `run_training_workflow()`. The intent is to model where the market is wrong, not just re-learn the market level.
+
+For mixed-platform resolved datasets, the real-data pack path now uses light
+segment balancing against `canonical_category` to reduce domination by a single
+platform/category block while still keeping a global model.

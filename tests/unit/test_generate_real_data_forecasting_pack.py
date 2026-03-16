@@ -55,6 +55,7 @@ def test_generate_real_data_pack_uses_local_dataset_candidate(tmp_path, monkeypa
     assert result["selected_input"]["kind"] == "dataset"
     assert (tmp_path / "real_data_pack" / "promotion_decision.json").exists()
     assert result["training_summary"]["sample_weight_scheme"] == "segment_balanced"
+    assert result["training_summary"]["routing_strategy"] == "crypto_vs_rest"
     manifest = json.loads((tmp_path / "real_data_pack" / "status.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "ok"
     readme = (tmp_path / "real_data_pack" / "README.md").read_text(encoding="utf-8")

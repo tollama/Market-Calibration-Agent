@@ -143,5 +143,7 @@ successful real-data pack run. See:
 - `artifacts/forecasting_baseline_pack/real_data_all_platforms_v3/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_all_platforms_v6/status.json`
 - `artifacts/forecasting_baseline_pack/real_data_all_platforms_v6/promotion_decision.json`
+- `artifacts/forecasting_baseline_pack/real_data_all_platforms_v7/status.json`
+- `artifacts/forecasting_baseline_pack/real_data_all_platforms_v7/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_v1/promotion_decision.json`
 - `artifacts/forecasting_baseline_pack/real_data_v1/status.json`

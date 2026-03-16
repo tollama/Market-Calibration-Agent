@@ -130,6 +130,13 @@ class ResolvedModelMetrics:
     sample_weight_key: str
 
 
+@dataclass(frozen=True)
+class SegmentRoutingConfig:
+    strategy: str = "none"
+    route_key: str = "canonical_category"
+    min_segment_rows: int = 150
+
+
 class ResolvedLinearModel:
     def __init__(self, config: ResolvedModelConfig | None = None) -> None:
         self.config = config or ResolvedModelConfig()
@@ -266,7 +273,13 @@ class ResolvedLinearModel:
         )
 
     def save(self, path: str | Path) -> None:
-        payload = {
+        payload = self.to_payload()
+        resolved = Path(path)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
             "config": asdict(self.config),
             "numeric_features": self.numeric_features,
             "categorical_features": self.categorical_features,
@@ -286,13 +299,14 @@ class ResolvedLinearModel:
             "selected_drop_feature_groups": list(self.selected_drop_feature_groups),
             "metrics": asdict(self.metrics) if self.metrics is not None else None,
         }
-        resolved = Path(path)
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     @classmethod
     def load(cls, path: str | Path) -> "ResolvedLinearModel":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls.from_payload(payload)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ResolvedLinearModel":
         model = cls(ResolvedModelConfig(**payload["config"]))
         model.numeric_features = list(payload.get("numeric_features", []))
         model.categorical_features = list(payload.get("categorical_features", []))
@@ -607,6 +621,96 @@ class ResolvedLinearModel:
         return best_alpha, best_blend, best_drop_groups, best_metrics
 
 
+class SegmentedResolvedModel:
+    def __init__(
+        self,
+        *,
+        model_config: ResolvedModelConfig | None = None,
+        routing_config: SegmentRoutingConfig | None = None,
+    ) -> None:
+        self.model_config = model_config or ResolvedModelConfig()
+        self.routing_config = routing_config or SegmentRoutingConfig()
+        self.global_model = ResolvedLinearModel(self.model_config)
+        self.segment_models: dict[str, ResolvedLinearModel] = {}
+        self.segment_row_counts: dict[str, int] = {}
+
+    def fit(self, frame: pd.DataFrame, *, label_col: str = "label") -> dict[str, Any]:
+        self.global_model.fit(frame, label_col=label_col)
+        route_series = _segment_route_series(frame, self.routing_config)
+        self.segment_models = {}
+        self.segment_row_counts = {
+            str(key): int(value)
+            for key, value in route_series.value_counts(dropna=False).to_dict().items()
+        }
+        for segment, row_count in self.segment_row_counts.items():
+            if segment in {"", "__global__"}:
+                continue
+            if row_count < max(int(self.routing_config.min_segment_rows), 1):
+                continue
+            mask = route_series.eq(segment)
+            subset = frame.loc[mask].copy()
+            if subset.empty:
+                continue
+            labels = pd.to_numeric(subset[label_col], errors="coerce").dropna().astype(int)
+            if labels.nunique() < 2:
+                continue
+            model = ResolvedLinearModel(self.model_config)
+            model.fit(subset, label_col=label_col)
+            self.segment_models[str(segment)] = model
+        return {
+            "routing_strategy": str(self.routing_config.strategy),
+            "route_key": str(self.routing_config.route_key),
+            "trained_segments": sorted(self.segment_models.keys()),
+            "segment_row_counts": dict(sorted(self.segment_row_counts.items())),
+        }
+
+    def predict_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        base = self.global_model.predict_frame(frame).copy()
+        route_series = _segment_route_series(frame, self.routing_config)
+        base["route_segment"] = route_series.astype("string")
+        base["route_model"] = "global"
+        for segment, model in self.segment_models.items():
+            mask = route_series.eq(segment)
+            if not bool(mask.any()):
+                continue
+            segment_pred = model.predict_frame(frame.loc[mask]).copy()
+            for column in ("target_mode", "model_output", "pred", "baseline_pred", "recalibrated_pred"):
+                base.loc[mask, column] = segment_pred[column].to_numpy()
+            base.loc[mask, "route_model"] = f"segment:{segment}"
+        return base
+
+    def save(self, path: str | Path) -> None:
+        resolved = Path(path)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "model_type": "segmented_resolved_model",
+            "model_config": asdict(self.model_config),
+            "routing_config": asdict(self.routing_config),
+            "global_model": self.global_model.to_payload(),
+            "segment_models": {key: model.to_payload() for key, model in self.segment_models.items()},
+            "segment_row_counts": self.segment_row_counts,
+        }
+        resolved.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | Path) -> "SegmentedResolvedModel":
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        model = cls(
+            model_config=ResolvedModelConfig(**payload["model_config"]),
+            routing_config=SegmentRoutingConfig(**payload["routing_config"]),
+        )
+        model.global_model = ResolvedLinearModel.from_payload(payload["global_model"])
+        model.segment_models = {
+            str(key): ResolvedLinearModel.from_payload(value)
+            for key, value in payload.get("segment_models", {}).items()
+        }
+        model.segment_row_counts = {
+            str(key): int(value)
+            for key, value in payload.get("segment_row_counts", {}).items()
+        }
+        return model
+
+
 def train_resolved_model(
     rows: pd.DataFrame,
     *,
@@ -621,6 +725,29 @@ def train_resolved_model(
             predictions["recalibrated_pred"].tolist(),
             predictions["label"].astype(int).tolist(),
         ),
+    }
+    return model, predictions, summary
+
+
+def train_segmented_resolved_model(
+    rows: pd.DataFrame,
+    *,
+    model_config: ResolvedModelConfig | None = None,
+    routing_config: SegmentRoutingConfig | None = None,
+) -> tuple[SegmentedResolvedModel, pd.DataFrame, dict[str, Any]]:
+    model = SegmentedResolvedModel(
+        model_config=model_config,
+        routing_config=routing_config,
+    )
+    routing_summary = model.fit(rows)
+    predictions = pd.concat([rows.reset_index(drop=True), model.predict_frame(rows).reset_index(drop=True)], axis=1)
+    summary = {
+        **(asdict(model.global_model.metrics) if model.global_model.metrics is not None else {}),
+        "metric_bundle": summarize_metrics_extended(
+            predictions["recalibrated_pred"].tolist(),
+            predictions["label"].astype(int).tolist(),
+        ),
+        **routing_summary,
     }
     return model, predictions, summary
 
@@ -903,6 +1030,23 @@ def _sample_weight_series(frame: pd.DataFrame, config: ResolvedModelConfig) -> p
     clipped = raw.clip(lower=min_weight, upper=max_weight)
     normalized = clipped / max(float(clipped.mean()), 1e-9)
     return normalized.astype(float)
+
+
+def _segment_route_series(frame: pd.DataFrame, config: SegmentRoutingConfig) -> pd.Series:
+    strategy = str(config.strategy).strip().lower()
+    if strategy in {"", "none"}:
+        return pd.Series(["__global__"] * len(frame), index=frame.index, dtype="string")
+
+    if strategy == "crypto_vs_rest":
+        source = frame.get(config.route_key, pd.Series([""] * len(frame), index=frame.index)).astype("string").fillna("")
+        return source.str.lower().map(lambda value: "crypto" if value == "crypto" else "non_crypto").astype("string")
+
+    if strategy == "kalshi_vs_rest":
+        source = frame.get(config.route_key, pd.Series([""] * len(frame), index=frame.index)).astype("string").fillna("")
+        return source.str.lower().map(lambda value: "kalshi" if value == "kalshi" else "non_kalshi").astype("string")
+
+    source = frame.get(config.route_key, pd.Series([""] * len(frame), index=frame.index)).astype("string").fillna("__missing__")
+    return source
 
 
 def _weighted_brier_score(

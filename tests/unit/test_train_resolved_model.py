@@ -5,7 +5,10 @@ import pandas as pd
 from pipelines.train_resolved_model import (
     ResolvedLinearModel,
     ResolvedModelConfig,
+    SegmentRoutingConfig,
+    SegmentedResolvedModel,
     run_feature_ablation,
+    train_segmented_resolved_model,
     train_resolved_model,
 )
 
@@ -126,3 +129,60 @@ def test_train_resolved_model_supports_platform_category_weighting() -> None:
     assert summary["sample_weight_scheme"] == "segment_balanced"
     assert summary["sample_weight_key"] == "platform_category"
     assert predictions["recalibrated_pred"].between(0, 1).all()
+
+
+def test_train_segmented_resolved_model_routes_crypto_bucket() -> None:
+    rows = _training_rows().copy()
+    rows["platform"] = ["kalshi"] * 8 + ["polymarket"] * 4
+    rows["canonical_category"] = ["crypto"] * 8 + ["politics"] * 4
+    rows["platform_category"] = ["kalshi:crypto"] * 8 + ["polymarket:politics"] * 4
+
+    model, predictions, summary = train_segmented_resolved_model(
+        rows,
+        model_config=ResolvedModelConfig(
+            target_mode="residual",
+            use_horizon_interactions=True,
+            sample_weight_scheme="segment_balanced",
+            sample_weight_key="canonical_category",
+        ),
+        routing_config=SegmentRoutingConfig(
+            strategy="crypto_vs_rest",
+            route_key="canonical_category",
+            min_segment_rows=4,
+        ),
+    )
+
+    assert isinstance(model, SegmentedResolvedModel)
+    assert summary["routing_strategy"] == "crypto_vs_rest"
+    assert set(summary["trained_segments"]) == {"crypto", "non_crypto"}
+    assert set(predictions["route_model"]) == {"segment:crypto", "segment:non_crypto"}
+    assert predictions["pred"].between(0, 1).all()
+
+
+def test_segmented_resolved_model_round_trip(tmp_path: Path) -> None:
+    rows = _training_rows().copy()
+    rows["platform"] = ["kalshi"] * 8 + ["polymarket"] * 4
+    rows["canonical_category"] = ["crypto"] * 8 + ["politics"] * 4
+    rows["platform_category"] = ["kalshi:crypto"] * 8 + ["polymarket:politics"] * 4
+
+    model, _, _ = train_segmented_resolved_model(
+        rows,
+        model_config=ResolvedModelConfig(
+            target_mode="residual",
+            use_horizon_interactions=True,
+            sample_weight_scheme="segment_balanced",
+            sample_weight_key="canonical_category",
+        ),
+        routing_config=SegmentRoutingConfig(
+            strategy="crypto_vs_rest",
+            route_key="canonical_category",
+            min_segment_rows=4,
+        ),
+    )
+    path = tmp_path / "segmented_model.json"
+    model.save(path)
+
+    loaded = SegmentedResolvedModel.load(path)
+    preds = loaded.predict_frame(rows)
+    assert set(preds["route_model"]) == {"segment:crypto", "segment:non_crypto"}
+    assert preds["pred"].between(0, 1).all()

@@ -21,7 +21,9 @@ from pipelines.generate_backtest_report import EventHoldoutConfig, WalkForwardCo
 from pipelines.train_resolved_model import (
     ResolvedModelConfig,
     ResolvedLinearModel,
+    SegmentRoutingConfig,
     run_feature_ablation,
+    train_segmented_resolved_model,
     train_resolved_model,
 )
 from scripts.evaluate_forecasting_promotion_gate import evaluate_promotion_gate
@@ -132,8 +134,8 @@ def _explicit_candidate(path: Path) -> tuple[CandidateInfo | None, pd.DataFrame 
     return candidate, frame, None
 
 
-def _train_from_dataset(dataset: pd.DataFrame) -> tuple[ResolvedLinearModel, pd.DataFrame, dict[str, Any], pd.DataFrame]:
-    model, predictions, summary = train_resolved_model(
+def _train_from_dataset(dataset: pd.DataFrame) -> tuple[Any, pd.DataFrame, dict[str, Any], pd.DataFrame]:
+    model, predictions, summary = train_segmented_resolved_model(
         dataset,
         model_config=ResolvedModelConfig(
             target_mode="residual",
@@ -142,6 +144,11 @@ def _train_from_dataset(dataset: pd.DataFrame) -> tuple[ResolvedLinearModel, pd.
             sample_weight_scheme="segment_balanced",
             sample_weight_key="canonical_category",
             sample_weight_power=0.25,
+        ),
+        routing_config=SegmentRoutingConfig(
+            strategy="crypto_vs_rest",
+            route_key="canonical_category",
+            min_segment_rows=200,
         ),
     )
     if len(dataset) > 1000:
@@ -156,6 +163,7 @@ def _train_from_dataset(dataset: pd.DataFrame) -> tuple[ResolvedLinearModel, pd.
                     "brier_baseline": float(summary["brier_baseline"]),
                     "target_mode": str(summary["target_mode"]),
                     "blend_weight_model": float(summary["blend_weight_model"]),
+                    "routing_strategy": str(summary.get("routing_strategy", "none")),
                 }
             ]
         )
@@ -264,6 +272,7 @@ def _render_success_readme(
                 "Training summary:",
                 f"- feature count: `{training_summary.get('feature_count', 0)}`",
                 f"- target mode: `{training_summary.get('target_mode', 'unknown')}`",
+                f"- routing strategy: `{training_summary.get('routing_strategy', 'none')}`",
                 f"- baseline brier: `{training_summary.get('brier_baseline', 'n/a')}`",
                 f"- blended brier: `{training_summary.get('brier_blended', 'n/a')}`",
                 "",

@@ -37,3 +37,8 @@ Current default workflow uses `target_mode=residual` with horizon interactions e
 For mixed-platform resolved datasets, the real-data pack path now uses light
 segment balancing against `canonical_category` to reduce domination by a single
 platform/category block while still keeping a global model.
+
+The current real-data pack path also supports routed offline training. The
+active configuration uses a global weighted residual model plus segment models
+for `crypto` vs `non_crypto`, routed by `canonical_category` with a global
+fallback.

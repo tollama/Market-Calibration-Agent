@@ -66,6 +66,10 @@ On mixed-platform packs the trainer also applies light segment balancing
 against `canonical_category` so one dominant platform/category slice does not
 dictate model selection by volume alone.
 
+The latest pack path layers routed offline training on top of that weighting:
+a global weighted model plus `crypto` and `non_crypto` segment models, with
+prediction-time routing by `canonical_category`.
+
 If local resolved inputs are not present, the script writes a blocked pack with:
 
 - `status.json`
@@ -127,3 +131,6 @@ Exit codes:
 - The current tuned all-platform benchmark with light segment balancing is
   recorded at
   `artifacts/forecasting_baseline_pack/real_data_all_platforms_v6/status.json`.
+- The current routed all-platform benchmark with `crypto_vs_rest` segment
+  training is recorded at
+  `artifacts/forecasting_baseline_pack/real_data_all_platforms_v7/status.json`.

@@ -1,30 +1,32 @@
 {
   "category_counts": {
-    "art": 28,
-    "business": 6,
-    "chess": 13,
-    "coronavirus": 30,
-    "crypto": 58,
-    "entertainment": 4,
-    "games": 14,
-    "global_politics": 3,
-    "macro": 4,
-    "nba_playoffs": 1,
-    "nfts": 3,
-    "olympics": 2,
+    "art": 55,
+    "business": 127,
+    "chess": 49,
+    "coronavirus": 135,
+    "crypto": 292,
+    "entertainment": 1,
+    "games": 15,
+    "global_politics": 51,
+    "macro": 5,
+    "nba_playoffs": 6,
+    "nfts": 101,
+    "olympics": 16,
     "personal": 2,
+    "poker": 7,
     "politics": 2,
-    "pop_culture": 17,
-    "science": 3,
-    "space": 2,
-    "sports": 524,
-    "tech": 2,
+    "pop_culture": 183,
+    "science": 51,
+    "space": 4,
+    "sports": 1625,
+    "tech": 4,
     "test": 3,
-    "unknown": 20,
-    "us_current_affairs": 79,
+    "ukraine_&_russia": 46,
+    "unknown": 188650,
+    "us_current_affairs": 314,
     "weather": 2
   },
-  "markets": 822,
+  "markets": 191745,
   "output_path": "data/derived/resolved/bootstrap_prediction_market_resolved_dataset.csv",
   "platform_fetch_counts": {
     "kalshi": {
@@ -36,16 +38,16 @@
       "market_count": 500
     },
     "polymarket": {
-      "event_count": 0,
-      "market_count": 500
+      "event_count": 264031,
+      "market_count": 569908
     }
   },
   "platform_row_counts": {
     "kalshi": 500,
-    "manifold": 46,
-    "polymarket": 276
+    "manifold": 47,
+    "polymarket": 191199
   },
-  "resolved_rows": 822,
+  "resolved_rows": 191746,
   "status": "ok",
-  "unique_events": 720
+  "unique_events": 37984
 }

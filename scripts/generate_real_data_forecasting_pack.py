@@ -161,10 +161,39 @@ def _dataset_summary(dataset: pd.DataFrame) -> dict[str, Any]:
     return summary
 
 
+def _clean_resolved_dataset(dataset: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
+    if dataset.empty:
+        return dataset, {"excluded_rows": 0, "reasons": {}}
+
+    excluded = pd.Series(False, index=dataset.index)
+    reasons: dict[str, int] = {}
+
+    if "category" in dataset.columns:
+        category_mask = dataset["category"].astype("string").str.lower().eq("test")
+        if category_mask.any():
+            excluded |= category_mask
+            reasons["category:test"] = int(category_mask.sum())
+
+    if "title" in dataset.columns:
+        title_series = dataset["title"].astype("string").fillna("").str.lower().str.strip()
+        title_mask = title_series.str.startswith("test, do not trade") | title_series.str.startswith("daily market")
+        if title_mask.any():
+            excluded |= title_mask
+            reasons["title:test_or_daily_market"] = int(title_mask.sum())
+
+    cleaned = dataset.loc[~excluded].reset_index(drop=True)
+    summary = {
+        "excluded_rows": int(excluded.sum()),
+        "reasons": reasons,
+    }
+    return cleaned, summary
+
+
 def _render_success_readme(
     *,
     selected: CandidateInfo,
     dataset_summary: dict[str, Any],
+    cleaning_summary: dict[str, Any],
     training_summary: dict[str, Any],
     promotion: dict[str, Any],
     report_summary: dict[str, Any],
@@ -189,6 +218,7 @@ def _render_success_readme(
                 f"- categories: `{categories}`",
                 f"- liquidity buckets: `{liquidity_buckets}`",
                 f"- tte buckets: `{tte_buckets}`",
+                f"- excluded rows during cleaning: `{cleaning_summary.get('excluded_rows', 0)}`",
                 "",
                 "Training summary:",
                 f"- feature count: `{training_summary.get('feature_count', 0)}`",
@@ -305,6 +335,7 @@ def generate_real_data_pack(
             ),
         )
 
+    dataset, cleaning_summary = _clean_resolved_dataset(dataset)
     if dataset.empty:
         return _write_blocked_pack(
             output_dir,
@@ -359,6 +390,7 @@ def generate_real_data_pack(
         "candidate_count": len(candidates),
         "candidates": [asdict(candidate) for candidate in candidates],
         "dataset_summary": dataset_summary,
+        "cleaning_summary": cleaning_summary,
         "training_summary": summary,
         "report_summary": report_summary,
         "promotion": promotion,
@@ -377,6 +409,7 @@ def generate_real_data_pack(
         _render_success_readme(
             selected=selected,
             dataset_summary=dataset_summary,
+            cleaning_summary=cleaning_summary,
             training_summary=summary,
             promotion=promotion,
             report_summary=report_summary,

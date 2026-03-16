@@ -11,7 +11,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from calibration.metrics import brier_score, summarize_metrics_extended
+from calibration.metrics import brier_score, log_loss, summarize_metrics_extended
 from features.external_enrichment import ExternalEnrichmentConfig, enrich_with_external_features
 from pipelines.build_resolved_training_dataset import (
     ResolvedDatasetConfig,
@@ -88,9 +88,18 @@ _FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
 @dataclass(frozen=True)
 class ResolvedModelConfig:
     alpha: float = 1.0
+    alpha_grid: tuple[float, ...] = (0.25, 1.0, 4.0, 16.0, 64.0)
     validation_fraction: float = 0.2
     min_validation_rows: int = 10
+    validation_windows: int = 3
     blend_grid_size: int = 21
+    min_categorical_level_count: int = 2
+    selection_metric: str = "joint"
+    drop_feature_groups: tuple[str, ...] = ()
+    feature_group_grid: tuple[str, ...] = (
+        "all_features",
+        "drop:time_to_event",
+    )
     target_mode: str = "direct"
     use_horizon_interactions: bool = False
 
@@ -99,11 +108,15 @@ class ResolvedModelConfig:
 class ResolvedModelMetrics:
     train_rows: int
     validation_rows: int
+    validation_windows: int
     target_mode: str
     brier_model: float
     brier_blended: float
     brier_baseline: float
     blend_weight_model: float
+    selected_alpha: float
+    validation_objective: float
+    selected_drop_feature_groups: list[str]
     feature_count: int
 
 
@@ -124,6 +137,8 @@ class ResolvedLinearModel:
         self.coefficients: list[float] = []
         self.intercept: float = 0.0
         self.blend_weight_model: float = 1.0
+        self.selected_alpha: float = float(self.config.alpha)
+        self.selected_drop_feature_groups: tuple[str, ...] = tuple(str(value) for value in self.config.drop_feature_groups)
         self.metrics: ResolvedModelMetrics | None = None
 
     def fit(self, frame: pd.DataFrame, *, label_col: str = "label") -> ResolvedModelMetrics:
@@ -152,41 +167,58 @@ class ResolvedLinearModel:
             train = ordered
             validation = ordered.iloc[0:0].copy()
 
+        validation_windows = self._build_validation_windows(ordered, validation_rows)
+        self.blend_weight_model = 1.0
+        validation_objective = float("nan")
+
+        if validation_windows:
+            best_alpha, best_blend, best_drop_groups, validation_metrics = self._select_alpha_and_blend(
+                ordered,
+                validation_windows=validation_windows,
+                label_col=label_col,
+            )
+            self.selected_alpha = float(best_alpha)
+            self.blend_weight_model = float(best_blend)
+            self.selected_drop_feature_groups = tuple(best_drop_groups)
+            validation_objective = float(validation_metrics["objective"])
+            model_brier = float(validation_metrics["brier_model"])
+            blended_brier = float(validation_metrics["brier_blended"])
+            baseline_brier = float(validation_metrics["brier_baseline"])
+        else:
+            self.selected_alpha = float(self.config.alpha)
+            self.selected_drop_feature_groups = tuple(str(value) for value in self.config.drop_feature_groups)
+            model_brier = float("nan")
+            blended_brier = float("nan")
+            baseline_brier = float("nan")
+
+        self._select_features(train)
         X_train = self._fit_transform(train)
         y_train_labels = train[label_col].astype(float).to_numpy()
         y_train_target = self._training_target(train, label_col=label_col)
-        self._fit_linear_weights(X_train, y_train_target)
+        self._fit_linear_weights(X_train, y_train_target, alpha=self.selected_alpha)
 
-        train_pred = self.predict_proba(train)
-        train_market = _market_prob_series(train)
-        model_brier = brier_score(train_pred.tolist(), y_train_labels.tolist())
-        blended_brier = model_brier
-        baseline_brier = brier_score(train_market.tolist(), y_train_labels.tolist())
-        self.blend_weight_model = 1.0
-
-        if not validation.empty:
-            validation_y = validation[label_col].astype(int).tolist()
-            validation_model = self.predict_proba(validation).tolist()
-            market_prob = _market_prob_series(validation).tolist()
-            self.blend_weight_model = _select_blend_weight(
-                validation_model,
-                market_prob,
-                validation_y,
-                grid_size=self.config.blend_grid_size,
+        if not validation_windows:
+            train_pred = self.predict_proba(train)
+            train_market = _market_prob_series(train)
+            model_brier = brier_score(train_pred.tolist(), y_train_labels.tolist())
+            blended_brier = brier_score(
+                _blend_predictions(train_pred.tolist(), train_market.tolist(), self.blend_weight_model),
+                y_train_labels.tolist(),
             )
-            blended = _blend_predictions(validation_model, market_prob, self.blend_weight_model)
-            model_brier = brier_score(validation_model, validation_y)
-            blended_brier = brier_score(blended, validation_y)
-            baseline_brier = brier_score(market_prob, validation_y)
+            baseline_brier = brier_score(train_market.tolist(), y_train_labels.tolist())
 
         self.metrics = ResolvedModelMetrics(
             train_rows=int(len(train)),
             validation_rows=int(len(validation)),
+            validation_windows=int(len(validation_windows)),
             target_mode=str(self.config.target_mode),
             brier_model=float(model_brier),
             brier_blended=float(blended_brier),
             brier_baseline=float(baseline_brier),
             blend_weight_model=float(self.blend_weight_model),
+            selected_alpha=float(self.selected_alpha),
+            validation_objective=float(validation_objective),
+            selected_drop_feature_groups=list(self.selected_drop_feature_groups),
             feature_count=int(len(self.feature_names)),
         )
         return self.metrics
@@ -232,6 +264,8 @@ class ResolvedLinearModel:
             "coefficients": self.coefficients,
             "intercept": self.intercept,
             "blend_weight_model": self.blend_weight_model,
+            "selected_alpha": self.selected_alpha,
+            "selected_drop_feature_groups": list(self.selected_drop_feature_groups),
             "metrics": asdict(self.metrics) if self.metrics is not None else None,
         }
         resolved = Path(path)
@@ -259,6 +293,8 @@ class ResolvedLinearModel:
         model.coefficients = [float(value) for value in payload.get("coefficients", [])]
         model.intercept = float(payload.get("intercept", 0.0))
         model.blend_weight_model = float(payload.get("blend_weight_model", 1.0))
+        model.selected_alpha = float(payload.get("selected_alpha", model.config.alpha))
+        model.selected_drop_feature_groups = tuple(str(value) for value in payload.get("selected_drop_feature_groups", model.config.drop_feature_groups))
         if payload.get("metrics") is not None:
             model.metrics = ResolvedModelMetrics(**payload["metrics"])
         return model
@@ -280,10 +316,22 @@ class ResolvedLinearModel:
         return X @ np.asarray(self.coefficients, dtype=float) + float(self.intercept)
 
     def _select_features(self, frame: pd.DataFrame) -> None:
-        self.numeric_features = [column for column in _NUMERIC_CANDIDATES if column in frame.columns]
+        blocked = self._blocked_feature_columns(frame.columns)
+        self.numeric_features = [column for column in _NUMERIC_CANDIDATES if column in frame.columns and column not in blocked]
         if "market_prob" not in self.numeric_features and "p_yes" in frame.columns:
             self.numeric_features.insert(0, "p_yes")
-        self.categorical_features = [column for column in _CATEGORICAL_CANDIDATES if column in frame.columns]
+        self.categorical_features = [column for column in _CATEGORICAL_CANDIDATES if column in frame.columns and column not in blocked]
+
+    def _blocked_feature_columns(self, columns: Sequence[object]) -> set[str]:
+        available = {str(column) for column in columns}
+        blocked: set[str] = set()
+        for group_name in self.selected_drop_feature_groups:
+            blocked.update(
+                member
+                for member in _FEATURE_GROUPS.get(str(group_name), ())
+                if member in available
+            )
+        return blocked
 
     def _order_for_validation(self, frame: pd.DataFrame) -> pd.DataFrame:
         for column in ("snapshot_ts", "ts", "resolution_ts"):
@@ -318,7 +366,11 @@ class ResolvedLinearModel:
         self.category_levels = {}
         for column in self.categorical_features:
             series = frame.get(column).astype("string").fillna("__missing__")
-            levels = sorted(series.unique().tolist())
+            levels = self._fit_category_levels(series)
+            if "__other__" in levels:
+                series = series.where(series.isin(levels), "__other__")
+            else:
+                series = series.where(series.isin(levels), "__missing__")
             self.category_levels[column] = levels
             dummies = pd.get_dummies(series, prefix=column)
             dummies = dummies.reindex(columns=[f"{column}_{level}" for level in levels], fill_value=0)
@@ -388,23 +440,128 @@ class ResolvedLinearModel:
         for column in self.categorical_features:
             levels = self.category_levels.get(column, [])
             series = frame.get(column).astype("string").fillna("__missing__")
+            if "__other__" in levels:
+                series = series.where(series.isin(levels), "__other__")
+            elif "__missing__" in levels:
+                series = series.where(series.isin(levels), "__missing__")
             dummies = pd.get_dummies(series, prefix=column)
             dummies = dummies.reindex(columns=[f"{column}_{level}" for level in levels], fill_value=0)
             categorical_parts.append(dummies.to_numpy(dtype=float))
         matrices = [part for part in numeric_parts + interaction_parts + categorical_parts if part.size > 0]
         return np.concatenate(matrices, axis=1) if matrices else np.zeros((len(frame), 0), dtype=float)
 
-    def _fit_linear_weights(self, X: np.ndarray, y: np.ndarray) -> None:
+    def _fit_linear_weights(self, X: np.ndarray, y: np.ndarray, *, alpha: float | None = None) -> None:
         if X.ndim != 2:
             raise ValueError("X must be 2-dimensional")
-        X_design = np.concatenate([np.ones((len(X), 1), dtype=float), X], axis=1)
-        ridge = np.eye(X_design.shape[1], dtype=float) * float(self.config.alpha)
-        ridge[0, 0] = 0.0
-        lhs = X_design.T @ X_design + ridge
-        rhs = X_design.T @ y
-        coeff = np.linalg.pinv(lhs) @ rhs
+        coeff = _solve_ridge_weights(X, y, alpha=float(self.config.alpha if alpha is None else alpha))
         self.intercept = float(coeff[0])
         self.coefficients = [float(value) for value in coeff[1:]]
+
+    def _fit_category_levels(self, series: pd.Series) -> list[str]:
+        min_count = max(int(self.config.min_categorical_level_count), 1)
+        counts = series.value_counts(dropna=False)
+        levels = sorted(str(index) for index, count in counts.items() if int(count) >= min_count)
+        if len(levels) < len(counts):
+            levels.append("__other__")
+        if not levels:
+            levels = ["__missing__"]
+        return sorted(dict.fromkeys(levels))
+
+    def _build_validation_windows(
+        self,
+        ordered: pd.DataFrame,
+        validation_rows: int,
+    ) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
+        if validation_rows <= 0 or len(ordered) <= validation_rows:
+            return []
+        if len(ordered) < self.config.min_validation_rows * 2:
+            return []
+        max_windows = max(1, int(self.config.validation_windows))
+        window_count = min(max_windows, max(1, (len(ordered) // validation_rows) - 1))
+        start = len(ordered) - (window_count * validation_rows)
+        windows: list[tuple[pd.DataFrame, pd.DataFrame]] = []
+        for idx in range(window_count):
+            val_start = start + (idx * validation_rows)
+            val_end = min(len(ordered), val_start + validation_rows)
+            train = ordered.iloc[:val_start].copy()
+            validation = ordered.iloc[val_start:val_end].copy()
+            if len(train) < self.config.min_validation_rows or validation.empty:
+                continue
+            windows.append((train, validation))
+        return windows
+
+    def _select_alpha_and_blend(
+        self,
+        ordered: pd.DataFrame,
+        *,
+        validation_windows: list[tuple[pd.DataFrame, pd.DataFrame]],
+        label_col: str,
+    ) -> tuple[float, float, tuple[str, ...], dict[str, float]]:
+        best_alpha = float(self.config.alpha)
+        best_blend = 1.0
+        best_drop_groups: tuple[str, ...] = tuple(str(value) for value in self.config.drop_feature_groups)
+        best_metrics: dict[str, float] | None = None
+        best_objective = float("inf")
+        for drop_groups in _candidate_drop_feature_groups(self.config, ordered.columns):
+            for alpha in _candidate_alphas(self.config):
+                validation_model: list[float] = []
+                validation_market: list[float] = []
+                validation_labels: list[int] = []
+                for train, validation in validation_windows:
+                    temp_model = ResolvedLinearModel(
+                        ResolvedModelConfig(
+                            alpha=float(alpha),
+                            alpha_grid=(),
+                            validation_fraction=0.0,
+                            min_validation_rows=self.config.min_validation_rows,
+                            validation_windows=1,
+                            blend_grid_size=self.config.blend_grid_size,
+                            min_categorical_level_count=self.config.min_categorical_level_count,
+                            selection_metric=self.config.selection_metric,
+                            drop_feature_groups=tuple(drop_groups),
+                            feature_group_grid=(),
+                            target_mode=self.config.target_mode,
+                            use_horizon_interactions=self.config.use_horizon_interactions,
+                        )
+                    )
+                    temp_model.fit(train, label_col=label_col)
+                    validation_frame = temp_model.predict_frame(validation)
+                    validation_model.extend(validation_frame["pred"].tolist())
+                    validation_market.extend(validation_frame["baseline_pred"].tolist())
+                    validation_labels.extend(validation[label_col].astype(int).tolist())
+
+                if not validation_labels:
+                    continue
+                blend_weight = _select_blend_weight(
+                    validation_model,
+                    validation_market,
+                    validation_labels,
+                    grid_size=self.config.blend_grid_size,
+                    selection_metric=self.config.selection_metric,
+                )
+                blended = _blend_predictions(validation_model, validation_market, blend_weight)
+                objective = _selection_objective(blended, validation_labels, selection_metric=self.config.selection_metric)
+                if objective < best_objective - 1e-12 or (
+                    abs(objective - best_objective) <= 1e-12 and blend_weight < best_blend
+                ):
+                    best_objective = float(objective)
+                    best_alpha = float(alpha)
+                    best_blend = float(blend_weight)
+                    best_drop_groups = tuple(drop_groups)
+                    best_metrics = {
+                        "objective": float(objective),
+                        "brier_model": float(brier_score(validation_model, validation_labels)),
+                        "brier_blended": float(brier_score(blended, validation_labels)),
+                        "brier_baseline": float(brier_score(validation_market, validation_labels)),
+                    }
+        if best_metrics is None:
+            return float(self.config.alpha), 1.0, tuple(str(value) for value in self.config.drop_feature_groups), {
+                "objective": float("nan"),
+                "brier_model": float("nan"),
+                "brier_blended": float("nan"),
+                "brier_baseline": float("nan"),
+            }
+        return best_alpha, best_blend, best_drop_groups, best_metrics
 
 
 def train_resolved_model(
@@ -600,17 +757,76 @@ def _select_blend_weight(
     labels: Sequence[int],
     *,
     grid_size: int,
+    selection_metric: str = "joint",
 ) -> float:
     best_weight = 1.0
-    best_brier = float("inf")
+    best_objective = float("inf")
     for step in range(max(2, int(grid_size))):
         weight = step / (max(2, int(grid_size)) - 1)
         blended = _blend_predictions(model_pred, market_pred, weight)
-        score = brier_score(blended, labels)
-        if score < best_brier:
-            best_brier = score
+        score = _selection_objective(blended, labels, selection_metric=selection_metric)
+        if score < best_objective - 1e-12 or (
+            abs(score - best_objective) <= 1e-12 and weight < best_weight
+        ):
+            best_objective = score
             best_weight = weight
     return float(best_weight)
+
+
+def _selection_objective(
+    preds: Sequence[float],
+    labels: Sequence[int],
+    *,
+    selection_metric: str,
+) -> float:
+    metric = str(selection_metric).strip().lower()
+    if metric == "brier":
+        return float(brier_score(preds, labels))
+    if metric == "log_loss":
+        return float(log_loss(preds, labels))
+    return float(brier_score(preds, labels) + (0.25 * log_loss(preds, labels)))
+
+
+def _solve_ridge_weights(X: np.ndarray, y: np.ndarray, *, alpha: float) -> np.ndarray:
+    X_design = np.concatenate([np.ones((len(X), 1), dtype=float), X], axis=1)
+    ridge = np.eye(X_design.shape[1], dtype=float) * float(alpha)
+    ridge[0, 0] = 0.0
+    lhs = X_design.T @ X_design + ridge
+    rhs = X_design.T @ y
+    return np.linalg.pinv(lhs) @ rhs
+
+
+def _candidate_alphas(config: ResolvedModelConfig) -> list[float]:
+    values = [float(config.alpha)]
+    values.extend(float(value) for value in config.alpha_grid)
+    return sorted({value for value in values if value > 0.0})
+
+
+def _candidate_drop_feature_groups(
+    config: ResolvedModelConfig,
+    columns: Sequence[object],
+) -> list[tuple[str, ...]]:
+    available = {str(column) for column in columns}
+    candidates: list[tuple[str, ...]] = [tuple(str(value) for value in config.drop_feature_groups)]
+    for item in config.feature_group_grid:
+        token = str(item).strip()
+        if not token or token == "all_features":
+            candidates.append(())
+            continue
+        if token.startswith("drop:"):
+            group_name = token.split(":", 1)[1]
+            members = _FEATURE_GROUPS.get(group_name, ())
+            if any(member in available for member in members):
+                candidates.append((group_name,))
+    deduped: list[tuple[str, ...]] = []
+    seen: set[tuple[str, ...]] = set()
+    for candidate in candidates:
+        normalized = tuple(sorted(dict.fromkeys(str(value) for value in candidate)))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
 
 
 def _active_feature_groups(columns: Sequence[object]) -> list[str]:

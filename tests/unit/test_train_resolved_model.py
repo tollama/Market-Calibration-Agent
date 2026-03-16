@@ -43,6 +43,8 @@ def test_train_resolved_model_produces_prediction_columns() -> None:
     assert isinstance(model, ResolvedLinearModel)
     assert set(predictions.columns) >= {"pred", "baseline_pred", "recalibrated_pred"}
     assert summary["feature_count"] > 0
+    assert "selected_alpha" in summary
+    assert "selected_drop_feature_groups" in summary
     assert predictions["recalibrated_pred"].between(0, 1).all()
 
 
@@ -52,6 +54,7 @@ def test_resolved_linear_model_round_trip(tmp_path: Path) -> None:
     model.save(path)
 
     loaded = ResolvedLinearModel.load(path)
+    assert loaded.selected_alpha > 0
     preds = loaded.predict_frame(_training_rows())
     assert preds["pred"].between(0, 1).all()
 

@@ -48,6 +48,10 @@ python3 scripts/generate_real_data_forecasting_pack.py \
   --input /absolute/path/to/resolved_dataset.csv
 ```
 
+The real-data generator now drops synthetic benchmark noise before training and
+evaluation, specifically rows classified as `category=test` and titles such as
+`Daily market` or `Test, do not trade`.
+
 If local resolved inputs are not present, the script writes a blocked pack with:
 
 - `status.json`

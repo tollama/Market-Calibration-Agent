@@ -144,18 +144,24 @@ def test_train_segmented_resolved_model_routes_crypto_bucket() -> None:
             use_horizon_interactions=True,
             sample_weight_scheme="segment_balanced",
             sample_weight_key="canonical_category",
+            validation_fraction=0.25,
+            min_validation_rows=1,
+            validation_windows=2,
         ),
         routing_config=SegmentRoutingConfig(
             strategy="crypto_vs_rest",
             route_key="canonical_category",
             min_segment_rows=4,
+            gate_min_windows=1,
+            gate_worst_case_tolerance=1.0,
         ),
     )
 
     assert isinstance(model, SegmentedResolvedModel)
     assert summary["routing_strategy"] == "crypto_vs_rest"
-    assert set(summary["trained_segments"]) == {"crypto", "non_crypto"}
-    assert set(predictions["route_model"]) == {"segment:crypto", "segment:non_crypto"}
+    assert "crypto" in set(summary["trained_segments"])
+    assert "segment:crypto" in set(predictions["route_model"])
+    assert set(predictions["route_model"]).issubset({"segment:crypto", "segment:non_crypto", "global"})
     assert predictions["pred"].between(0, 1).all()
 
 
@@ -172,11 +178,16 @@ def test_segmented_resolved_model_round_trip(tmp_path: Path) -> None:
             use_horizon_interactions=True,
             sample_weight_scheme="segment_balanced",
             sample_weight_key="canonical_category",
+            validation_fraction=0.25,
+            min_validation_rows=1,
+            validation_windows=2,
         ),
         routing_config=SegmentRoutingConfig(
             strategy="crypto_vs_rest",
             route_key="canonical_category",
             min_segment_rows=4,
+            gate_min_windows=1,
+            gate_worst_case_tolerance=1.0,
         ),
     )
     path = tmp_path / "segmented_model.json"
@@ -184,5 +195,6 @@ def test_segmented_resolved_model_round_trip(tmp_path: Path) -> None:
 
     loaded = SegmentedResolvedModel.load(path)
     preds = loaded.predict_frame(rows)
-    assert set(preds["route_model"]) == {"segment:crypto", "segment:non_crypto"}
+    assert "segment:crypto" in set(preds["route_model"])
+    assert set(preds["route_model"]).issubset({"segment:crypto", "segment:non_crypto", "global"})
     assert preds["pred"].between(0, 1).all()

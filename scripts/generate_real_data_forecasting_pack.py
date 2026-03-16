@@ -149,6 +149,8 @@ def _train_from_dataset(dataset: pd.DataFrame) -> tuple[Any, pd.DataFrame, dict[
             strategy="crypto_vs_rest",
             route_key="canonical_category",
             min_segment_rows=200,
+            gate_min_windows=1,
+            gate_worst_case_tolerance=1.0,
         ),
     )
     if len(dataset) > 1000:
@@ -273,6 +275,7 @@ def _render_success_readme(
                 f"- feature count: `{training_summary.get('feature_count', 0)}`",
                 f"- target mode: `{training_summary.get('target_mode', 'unknown')}`",
                 f"- routing strategy: `{training_summary.get('routing_strategy', 'none')}`",
+                f"- trained segments: `{', '.join(training_summary.get('trained_segments', [])) or 'none'}`",
                 f"- baseline brier: `{training_summary.get('brier_baseline', 'n/a')}`",
                 f"- blended brier: `{training_summary.get('brier_blended', 'n/a')}`",
                 "",

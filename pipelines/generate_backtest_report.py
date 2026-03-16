@@ -426,8 +426,9 @@ def _build_overall_summary(
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for variant, column in variants.items():
-        metrics = compute_prediction_metrics(frame, prob_col=column)
-        sim = hold_to_resolution_simulation(frame, prob_col=column, edge_threshold=edge_threshold)
+        prob_col = _variant_probability_column(frame, variant, column)
+        metrics = compute_prediction_metrics(frame, prob_col=prob_col)
+        sim = hold_to_resolution_simulation(frame, prob_col=prob_col, edge_threshold=edge_threshold)
         rows.append({"model_variant": variant, **metrics, **sim})
     return pd.DataFrame(rows).sort_values("model_variant").reset_index(drop=True)
 
@@ -446,8 +447,9 @@ def _build_group_metrics(
         grouped = frame.groupby(group_field, dropna=False, sort=True)
         for group_value, sub in grouped:
             for variant, column in variants.items():
-                metrics = compute_prediction_metrics(sub, prob_col=column)
-                sim = hold_to_resolution_simulation(sub, prob_col=column, edge_threshold=edge_threshold)
+                prob_col = _variant_probability_column(sub, variant, column)
+                metrics = compute_prediction_metrics(sub, prob_col=prob_col)
+                sim = hold_to_resolution_simulation(sub, prob_col=prob_col, edge_threshold=edge_threshold)
                 rows.append(
                     {
                         "group_by": group_field,
@@ -536,6 +538,15 @@ def _build_prediction_export(frame: pd.DataFrame, variants: Mapping[str, str]) -
     for variant, source_col in variants.items():
         exported[f"p_{variant}"] = frame[source_col]
     return exported.reset_index(drop=True)
+
+
+def _variant_probability_column(frame: pd.DataFrame, variant: str, preferred_column: str) -> str:
+    if preferred_column in frame.columns:
+        return preferred_column
+    exported_column = f"p_{variant}"
+    if exported_column in frame.columns:
+        return exported_column
+    return preferred_column
 
 
 def _build_walk_forward_predictions(

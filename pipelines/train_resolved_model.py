@@ -135,6 +135,9 @@ class SegmentRoutingConfig:
     strategy: str = "none"
     route_key: str = "canonical_category"
     min_segment_rows: int = 150
+    gate_min_windows: int = 2
+    gate_min_improvement: float = 0.0
+    gate_worst_case_tolerance: float = 0.01
 
 
 class ResolvedLinearModel:
@@ -633,11 +636,13 @@ class SegmentedResolvedModel:
         self.global_model = ResolvedLinearModel(self.model_config)
         self.segment_models: dict[str, ResolvedLinearModel] = {}
         self.segment_row_counts: dict[str, int] = {}
+        self.segment_gate_metrics: dict[str, dict[str, float | int | bool]] = {}
 
     def fit(self, frame: pd.DataFrame, *, label_col: str = "label") -> dict[str, Any]:
         self.global_model.fit(frame, label_col=label_col)
         route_series = _segment_route_series(frame, self.routing_config)
         self.segment_models = {}
+        self.segment_gate_metrics = {}
         self.segment_row_counts = {
             str(key): int(value)
             for key, value in route_series.value_counts(dropna=False).to_dict().items()
@@ -654,6 +659,16 @@ class SegmentedResolvedModel:
             labels = pd.to_numeric(subset[label_col], errors="coerce").dropna().astype(int)
             if labels.nunique() < 2:
                 continue
+            gate_metrics = _evaluate_segment_route_gate(
+                frame,
+                segment=str(segment),
+                label_col=label_col,
+                model_config=self.model_config,
+                routing_config=self.routing_config,
+            )
+            self.segment_gate_metrics[str(segment)] = gate_metrics
+            if not bool(gate_metrics.get("activate", False)):
+                continue
             model = ResolvedLinearModel(self.model_config)
             model.fit(subset, label_col=label_col)
             self.segment_models[str(segment)] = model
@@ -662,6 +677,7 @@ class SegmentedResolvedModel:
             "route_key": str(self.routing_config.route_key),
             "trained_segments": sorted(self.segment_models.keys()),
             "segment_row_counts": dict(sorted(self.segment_row_counts.items())),
+            "segment_gate_metrics": self.segment_gate_metrics,
         }
 
     def predict_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
@@ -689,6 +705,7 @@ class SegmentedResolvedModel:
             "global_model": self.global_model.to_payload(),
             "segment_models": {key: model.to_payload() for key, model in self.segment_models.items()},
             "segment_row_counts": self.segment_row_counts,
+            "segment_gate_metrics": self.segment_gate_metrics,
         }
         resolved.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -707,6 +724,10 @@ class SegmentedResolvedModel:
         model.segment_row_counts = {
             str(key): int(value)
             for key, value in payload.get("segment_row_counts", {}).items()
+        }
+        model.segment_gate_metrics = {
+            str(key): dict(value)
+            for key, value in payload.get("segment_gate_metrics", {}).items()
         }
         return model
 
@@ -1047,6 +1068,65 @@ def _segment_route_series(frame: pd.DataFrame, config: SegmentRoutingConfig) -> 
 
     source = frame.get(config.route_key, pd.Series([""] * len(frame), index=frame.index)).astype("string").fillna("__missing__")
     return source
+
+
+def _evaluate_segment_route_gate(
+    frame: pd.DataFrame,
+    *,
+    segment: str,
+    label_col: str,
+    model_config: ResolvedModelConfig,
+    routing_config: SegmentRoutingConfig,
+) -> dict[str, float | int | bool]:
+    helper = ResolvedLinearModel(model_config)
+    ordered = helper._order_for_validation(frame)
+    validation_rows = max(int(len(ordered) * float(model_config.validation_fraction)), 0)
+    if len(ordered) >= model_config.min_validation_rows * 2:
+        validation_rows = max(validation_rows, model_config.min_validation_rows)
+    else:
+        validation_rows = 0
+    windows = helper._build_validation_windows(ordered, validation_rows)
+    improvements: list[float] = []
+    for train, validation in windows:
+        train_route = _segment_route_series(train, routing_config)
+        validation_route = _segment_route_series(validation, routing_config)
+        train_mask = train_route.eq(segment)
+        validation_mask = validation_route.eq(segment)
+        if int(train_mask.sum()) < max(int(routing_config.min_segment_rows), 1):
+            continue
+        if int(validation_mask.sum()) < max(int(model_config.min_validation_rows), 1):
+            continue
+        train_subset = train.loc[train_mask].copy()
+        validation_subset = validation.loc[validation_mask].copy()
+        labels = pd.to_numeric(train_subset[label_col], errors="coerce").dropna().astype(int)
+        if labels.nunique() < 2:
+            continue
+        global_model = ResolvedLinearModel(model_config)
+        global_model.fit(train, label_col=label_col)
+        segment_model = ResolvedLinearModel(model_config)
+        segment_model.fit(train_subset, label_col=label_col)
+        global_pred = global_model.predict_frame(validation_subset)["pred"].tolist()
+        segment_pred = segment_model.predict_frame(validation_subset)["pred"].tolist()
+        val_labels = validation_subset[label_col].astype(int).tolist()
+        weights = _sample_weight_series(validation_subset, model_config).tolist()
+        global_brier = _weighted_brier_score(global_pred, val_labels, sample_weight=weights)
+        segment_brier = _weighted_brier_score(segment_pred, val_labels, sample_weight=weights)
+        improvements.append(float(global_brier - segment_brier))
+
+    valid_windows = len(improvements)
+    avg_improvement = float(np.mean(improvements)) if improvements else float("-inf")
+    worst_improvement = float(min(improvements)) if improvements else float("-inf")
+    activate = (
+        valid_windows >= max(int(routing_config.gate_min_windows), 1)
+        and avg_improvement >= float(routing_config.gate_min_improvement)
+        and worst_improvement >= -float(routing_config.gate_worst_case_tolerance)
+    )
+    return {
+        "activate": bool(activate),
+        "valid_windows": int(valid_windows),
+        "avg_improvement": float(avg_improvement),
+        "worst_improvement": float(worst_improvement),
+    }
 
 
 def _weighted_brier_score(

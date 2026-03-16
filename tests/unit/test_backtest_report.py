@@ -141,6 +141,11 @@ def test_generate_backtest_report_writes_expected_artifacts(tmp_path: Path) -> N
     assert set(overall["model_variant"]) == {"baseline", "market", "primary"}
     assert set(overall.columns) >= {"brier", "log_loss", "ece", "accuracy", "avg_pnl", "selection_rate"}
 
+    walk_forward_overall = pd.read_csv(tmp_path / "walk_forward_overall_summary.csv")
+    assert set(walk_forward_overall["model_variant"]) == {"baseline", "market", "primary"}
+    assert walk_forward_overall["rows"].gt(0).all()
+    assert walk_forward_overall["brier"].notna().all()
+
     worst_fold = pd.read_csv(tmp_path / "walk_forward_worst_fold_summary.csv")
     assert set(worst_fold.columns) >= {"model_variant", "worst_fold", "worst_fold_brier"}
 

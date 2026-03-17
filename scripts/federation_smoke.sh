@@ -23,10 +23,15 @@ TOLLAMA_BASE_URL="http://127.0.0.1:${TOLLAMA_PORT}"
 
 NEWS_AGENT_DATA_DIR="${NEWS_AGENT_DATA_DIR:-/tmp/news-agent-smoke}"
 REPORT_PATH="${REPORT_PATH:-${ROOT_DIR}/artifacts/federation/federation_smoke_report.md}"
+ARTIFACT_DIR="${ARTIFACT_DIR:-${ROOT_DIR}/artifacts/federation}"
+LOG_DIR="${LOG_DIR:-${ARTIFACT_DIR}/logs}"
+JSON_DIR="${JSON_DIR:-${ARTIFACT_DIR}/json}"
 CURL_TIMEOUT="${CURL_TIMEOUT:-20}"
 
 mkdir -p "$(dirname "${REPORT_PATH}")"
 mkdir -p "${NEWS_AGENT_DATA_DIR}"
+mkdir -p "${LOG_DIR}"
+mkdir -p "${JSON_DIR}"
 
 TMP_DIR="$(mktemp -d)"
 PIDS=()
@@ -38,12 +43,27 @@ API_CALL_OUT=""
 
 cleanup() {
   local pid
+  local file
   for pid in "${PIDS[@]:-}"; do
     if kill -0 "${pid}" >/dev/null 2>&1; then
       kill "${pid}" >/dev/null 2>&1 || true
       wait "${pid}" >/dev/null 2>&1 || true
     fi
   done
+  if [[ -d "${TMP_DIR}" ]]; then
+    for file in "${TMP_DIR}"/*.log "${TMP_DIR}"/*.json; do
+      if [[ -f "${file}" ]]; then
+        case "${file}" in
+          *.log)
+            cp "${file}" "${LOG_DIR}/$(basename "${file}")"
+            ;;
+          *.json)
+            cp "${file}" "${JSON_DIR}/$(basename "${file}")"
+            ;;
+        esac
+      fi
+    done
+  fi
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
@@ -216,6 +236,8 @@ write_report() {
     echo "- pass_count: ${PASS_COUNT}"
     echo "- fail_count: ${FAIL_COUNT}"
     echo "- total_count: ${TOTAL_COUNT}"
+    echo "- log_dir: ${LOG_DIR}"
+    echo "- json_dir: ${JSON_DIR}"
     echo
     echo "## Summary"
     printf '%s\n' "${SUMMARY_LINES[@]}"

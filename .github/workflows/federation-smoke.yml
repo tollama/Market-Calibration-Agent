@@ -64,3 +64,5 @@ jobs:
           name: federation-smoke-report
           path: |
             Market-Calibration-Agent/artifacts/federation/federation_smoke_report.md
+            Market-Calibration-Agent/artifacts/federation/logs/
+            Market-Calibration-Agent/artifacts/federation/json/

@@ -87,7 +87,7 @@ python3 scripts/kpi_contract_report.py \
 
 ### 사전조건/실행/검증/실패시 대응
 
-- **사전조건**: Python 3.11+, `requirements.lock` 동기화 상태 점검, 실운영 토큰 미설정/placeholder 확인.
+- **사전조건**: Python `3.11.x` 또는 `3.12.x`, `requirements.lock` 동기화 상태 점검, 실운영 토큰 미설정/placeholder 확인.
 - **실행**: 위 하드닝 게이트 문서의 환경변수를 설정 후 실행.
 - **검증**: `artifacts/rollout_gate/rollout_hardening_gate_summary.json`의 `overall_status`가 `success`인지 확인하고, step 로그를 통해 실패 지점을 확인.
 - **실패시 대응**: 토큰·포트·Tollama 경로·레이트리밋 실패를 순차 점검 후 수정하고 게이트를 재실행.

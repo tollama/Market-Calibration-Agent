@@ -20,6 +20,8 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 
 # Local config and secrets
@@ -55,7 +57,7 @@ logs/
 *.swo
 *~
 
-# Mac OS
+# Windows
 Thumbs.db
 
 # Jupyter notebooks

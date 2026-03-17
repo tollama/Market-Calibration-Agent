@@ -16,4 +16,5 @@
 - Runtime observability (P2-09): `docs/ops/prd2-runtime-observability.md`
 - Runtime metrics smoke script: `scripts/prd2_runtime_metrics_smoke.py`
 - Live Tollama runbook: `docs/ops/live-tollama-integration-runbook.md`
+- Federation smoke runbook: `docs/ops/federation-smoke-runbook.md`
 - Example inputs: `scripts/examples/*.json`

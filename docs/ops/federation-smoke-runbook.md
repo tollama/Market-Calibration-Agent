@@ -53,6 +53,24 @@ REPORT_PATH=artifacts/federation/local_smoke.md \
 bash scripts/federation_smoke.sh
 ```
 
+## CI Execution
+Workflow:
+[.github/workflows/federation-smoke.yml](/Users/yongchoelchoi/Documents/TollamaAI-Github/Market-Calibration-Agent/.github/workflows/federation-smoke.yml)
+
+- `workflow_dispatch`: always available for manual runs
+- `schedule`: runs only when repo variable `ENABLE_FEDERATION_SMOKE_CI=true`
+
+Optional repo configuration:
+- Variable `NEWS_AGENT_REPOSITORY`
+- Variable `FINANCIAL_AGENT_REPOSITORY`
+- Variable `TOLLAMA_REPOSITORY`
+- Secret `MULTIREPO_READ_TOKEN` for private cross-repo checkout
+
+If those vars are not set, the workflow defaults to:
+- `yongchoelchoi/News-Agent`
+- `yongchoelchoi/Financial-Agent`
+- `yongchoelchoi/tollama`
+
 ## Expected Results
 - Exit code `0`
 - Report written to:

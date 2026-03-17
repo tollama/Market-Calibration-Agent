@@ -243,7 +243,7 @@ start_bg "mca" "${ROOT_DIR}" uv run --python "${PYTHON311_BIN}" uvicorn api.app:
 wait_for_http "mca_markets" "${MCA_BASE_URL}/markets"
 
 echo "[STEP] start tollama live federation"
-start_bg "tollama" "${WORKSPACE_DIR}" env PYTHONPATH="${TOLLAMA_PYTHONPATH}" TOLLAMA_USE_LIVE_CONNECTORS=true NEWS_AGENT_URL="${NEWS_BASE_URL}" FINANCIAL_AGENT_URL="${FINANCIAL_BASE_URL}" TOLLAMA_HOST="127.0.0.1:${TOLLAMA_PORT}" TOLLAMA_LOG_LEVEL=info "${PYTHON311_BIN}" -m tollama.daemon.main
+start_bg "tollama" "${TOLLAMA_DIR}" env PYTHONPATH="${TOLLAMA_PYTHONPATH}" TOLLAMA_USE_LIVE_CONNECTORS=true NEWS_AGENT_URL="${NEWS_BASE_URL}" FINANCIAL_AGENT_URL="${FINANCIAL_BASE_URL}" TOLLAMA_HOST="127.0.0.1:${TOLLAMA_PORT}" TOLLAMA_LOG_LEVEL=info uv run --python "${PYTHON311_BIN}" python -m tollama.daemon.main
 wait_for_http "tollama_health" "${TOLLAMA_BASE_URL}/v1/health"
 
 echo "[STEP] verify direct service payloads"

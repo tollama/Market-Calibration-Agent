@@ -105,13 +105,21 @@ import os
 from pathlib import Path
 
 base_dir = Path(os.environ["NEWS_AGENT_DATA_DIR"])
+if base_dir.exists():
+    for path in sorted(base_dir.rglob("*"), reverse=True):
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+        elif path.is_dir():
+            path.rmdir()
 base_dir.mkdir(parents=True, exist_ok=True)
-payload_path = base_dir / "trust_payloads.jsonl"
+payload_dir = base_dir / "trust_payloads" / "dt=2026-03-18"
+payload_dir.mkdir(parents=True, exist_ok=True)
+payload_path = payload_dir / "seed.jsonl"
 record = {
     "story_id": "story-smoke-001",
     "source_credibility": 0.91,
     "corroboration": 0.82,
-    "contradiction_score": 0.14,
+    "contradiction_score": 0.05,
     "propagation_delay_seconds": 45.0,
     "freshness_score": 0.97,
     "novelty": 0.33,
@@ -249,6 +257,7 @@ api_call_with_retry 10 "tollama_connectors" POST "${TOLLAMA_BASE_URL}/api/xai/co
 tollama_connectors_file="${API_CALL_OUT}"
 
 news_story_id="$(json_field "${news_payload_file}" "story_id")"
+news_contradiction_score="$(json_field "${news_payload_file}" "contradiction_score")"
 financial_liquidity="$(json_field "${financial_payload_file}" "liquidity_depth")"
 mca_market_id="$(json_field "${mca_trust_file}" "market_id")"
 financial_connector_status="$(json_field "${tollama_connectors_file}" "connectors[0].status")"
@@ -258,6 +267,12 @@ if [[ "${news_story_id}" == "story-smoke-001" ]]; then
   record_result "PASS" "news_fixture_payload" "story_id=${news_story_id}"
 else
   record_result "FAIL" "news_fixture_payload" "unexpected story_id=${news_story_id}"
+fi
+
+if [[ "${news_contradiction_score}" == "0.05" ]]; then
+  record_result "PASS" "news_contradiction_raw" "contradiction_score=${news_contradiction_score}"
+else
+  record_result "FAIL" "news_contradiction_raw" "unexpected contradiction_score=${news_contradiction_score}"
 fi
 
 if [[ -n "${financial_liquidity}" && "${financial_liquidity}" != "0" && "${financial_liquidity}" != "0.0" ]]; then
@@ -307,6 +322,8 @@ print(json.dumps({
         "agent_name": news_result.agent_name,
         "trust_score": news_result.trust_score,
         "risk_category": news_result.risk_category,
+        "contradiction_component_value": news_result.component_breakdown["contradiction_penalty"].value,
+        "contradiction_component_score": news_result.component_breakdown["contradiction_penalty"].score,
     },
     "financial_result": {
         "agent_name": financial_result.agent_name,
@@ -317,6 +334,8 @@ print(json.dumps({
 PY
 
 assembled_story_id="$(json_field "${assembly_out}" "news_payload.story_id")"
+assembled_news_contradiction_value="$(json_field "${assembly_out}" "news_result.contradiction_component_value")"
+assembled_news_contradiction_score="$(json_field "${assembly_out}" "news_result.contradiction_component_score")"
 assembled_financial_agent="$(json_field "${assembly_out}" "financial_result.agent_name")"
 
 if [[ "${assembled_story_id}" == "story-smoke-001" ]]; then
@@ -329,6 +348,12 @@ if [[ "${assembled_financial_agent}" == "financial_market" ]]; then
   record_result "PASS" "tollama_financial_assembly" "agent_name=${assembled_financial_agent}"
 else
   record_result "FAIL" "tollama_financial_assembly" "unexpected agent_name=${assembled_financial_agent}"
+fi
+
+if [[ "${assembled_news_contradiction_value}" == "0.05" && "${assembled_news_contradiction_score}" == "0.95" ]]; then
+  record_result "PASS" "tollama_news_contradiction_semantics" "value=${assembled_news_contradiction_value} score=${assembled_news_contradiction_score}"
+else
+  record_result "FAIL" "tollama_news_contradiction_semantics" "value=${assembled_news_contradiction_value} score=${assembled_news_contradiction_score}"
 fi
 
 write_report

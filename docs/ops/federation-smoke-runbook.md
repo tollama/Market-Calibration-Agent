@@ -35,7 +35,9 @@ It performs these steps:
    - `Financial-Agent` `/instruments/AAPL`
    - `MCA` `/markets/mkt-90/trust-explanation`
    - `tollama` `/api/xai/connectors/health`
+   - raw `News-Agent` `contradiction_score` remains low and is not inverted
    - tollama connector assembly against live `news` and `financial_market` services
+   - tollama interprets that same news payload as `contradiction_penalty.score = 1 - contradiction_score`
 7. Writes a markdown report and shuts down all started processes.
 
 ## Local Execution
@@ -61,10 +63,12 @@ bash scripts/federation_smoke.sh
   - MCA startup
   - tollama startup
   - news fixture payload
+  - news contradiction raw score
   - financial provider-backed payload
   - MCA trust explanation
   - tollama connector health
   - tollama news assembly
+  - tollama news contradiction semantics
   - tollama financial assembly
 
 ## Failure Interpretation

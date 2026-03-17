@@ -34,6 +34,19 @@ def _is_placeholder_token(value: str | None) -> bool:
     return normalized in _PLACEHOLDER_TOKENS
 
 
+def _coerce_mapping_payload(value: Any) -> Mapping[str, Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        return value
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(mode="python")
+        if isinstance(dumped, Mapping):
+            return dumped
+    return None
+
+
 from fastapi.responses import PlainTextResponse
 
 from .dependencies import LocalDerivedStore, get_derived_store
@@ -323,7 +336,10 @@ def get_market_trust_explanation(
     if market is None:
         raise HTTPException(status_code=404, detail=f"Market not found: {market_id}")
     metrics = store.load_market_metrics(market_id)
-    explanation = build_market_trust_explanation(market=market, metrics=metrics)
+    explanation = build_market_trust_explanation(
+        market=_coerce_mapping_payload(market),
+        metrics=_coerce_mapping_payload(metrics),
+    )
     return TrustExplanationResponse(**explanation)
 
 

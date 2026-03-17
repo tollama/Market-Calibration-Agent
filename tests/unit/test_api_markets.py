@@ -78,6 +78,22 @@ def test_markets_and_detail_and_metrics(monkeypatch, tmp_path):
     assert payload["alert_severity_counts"]["HIGH"] == 1
 
 
+def test_market_trust_explanation_accepts_store_models(monkeypatch, tmp_path):
+    _write_fixture_files(tmp_path)
+    monkeypatch.setenv("DERIVED_DIR", str(tmp_path / "derived"))
+
+    client = TestClient(api_app.app)
+    response = client.get("/markets/mkt-90/trust-explanation")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["market_id"] == "mkt-90"
+    assert payload["trust_score"] == pytest.approx(74.2)
+    assert payload["reason_codes"] == ["BAND_BREACH"]
+    assert payload["drift_evidence"]["latest_alert"]["severity"] == "HIGH"
+    assert payload["calibration_evidence"]["scoreboard_by_window"][0]["window"] == "90d"
+
+
 def test_postmortem_missing_calibrated_market_returns_fallback(monkeypatch, tmp_path):
     (tmp_path / "derived" / "reports" / "postmortem").mkdir(parents=True)
     monkeypatch.setenv("DERIVED_DIR", str(tmp_path / "derived"))

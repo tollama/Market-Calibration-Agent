@@ -10,19 +10,19 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_FEDERATION_SMOKE_CI == 'true' }}
     runs-on: ubuntu-latest
     env:
-      NEWS_AGENT_REPOSITORY: ${{ vars.NEWS_AGENT_REPOSITORY != '' && vars.NEWS_AGENT_REPOSITORY || 'yongchoelchoi/News-Agent' }}
-      FINANCIAL_AGENT_REPOSITORY: ${{ vars.FINANCIAL_AGENT_REPOSITORY != '' && vars.FINANCIAL_AGENT_REPOSITORY || 'yongchoelchoi/Financial-Agent' }}
-      TOLLAMA_REPOSITORY: ${{ vars.TOLLAMA_REPOSITORY != '' && vars.TOLLAMA_REPOSITORY || 'yongchoelchoi/tollama' }}
+      NEWS_AGENT_REPOSITORY: ${{ vars.NEWS_AGENT_REPOSITORY != '' && vars.NEWS_AGENT_REPOSITORY || 'tollama/News-Agent' }}
+      FINANCIAL_AGENT_REPOSITORY: ${{ vars.FINANCIAL_AGENT_REPOSITORY != '' && vars.FINANCIAL_AGENT_REPOSITORY || 'tollama/Financial-Agent' }}
+      TOLLAMA_REPOSITORY: ${{ vars.TOLLAMA_REPOSITORY != '' && vars.TOLLAMA_REPOSITORY || 'tollama/tollama' }}
       CHECKOUT_TOKEN: ${{ secrets.MULTIREPO_READ_TOKEN != '' && secrets.MULTIREPO_READ_TOKEN || github.token }}
     steps:
       - name: Checkout MCA
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: Market-Calibration-Agent
           fetch-depth: 1
 
       - name: Checkout News-Agent
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ env.NEWS_AGENT_REPOSITORY }}
           path: News-Agent
@@ -30,7 +30,7 @@ jobs:
           token: ${{ env.CHECKOUT_TOKEN }}
 
       - name: Checkout Financial-Agent
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ env.FINANCIAL_AGENT_REPOSITORY }}
           path: Financial-Agent
@@ -38,7 +38,7 @@ jobs:
           token: ${{ env.CHECKOUT_TOKEN }}
 
       - name: Checkout tollama
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ env.TOLLAMA_REPOSITORY }}
           path: tollama
@@ -59,10 +59,11 @@ jobs:
 
       - name: Upload federation smoke report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: federation-smoke-report
           path: |
             Market-Calibration-Agent/artifacts/federation/federation_smoke_report.md
             Market-Calibration-Agent/artifacts/federation/logs/
             Market-Calibration-Agent/artifacts/federation/json/
+          if-no-files-found: ignore

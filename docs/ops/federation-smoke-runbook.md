@@ -67,9 +67,9 @@ Optional repo configuration:
 - Secret `MULTIREPO_READ_TOKEN` for private cross-repo checkout
 
 If those vars are not set, the workflow defaults to:
-- `yongchoelchoi/News-Agent`
-- `yongchoelchoi/Financial-Agent`
-- `yongchoelchoi/tollama`
+- `tollama/News-Agent`
+- `tollama/Financial-Agent`
+- `tollama/tollama`
 
 ## Expected Results
 - Exit code `0`
